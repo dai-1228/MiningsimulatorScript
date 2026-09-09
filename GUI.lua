@@ -105,9 +105,22 @@ local rebirthDigging = false
 local buyTrip = false
 local buyTripReason = ""
 local buyReturnPos = nil
+local buyTripAt = 0
 local SurfaceCFrame = CFrame.new(-86, 14, -12)
 local BUY_TRIP_TIME = 10
+local BUY_TRIP_MAX = 15
 local EnterBuyTrip, ExitBuyTrip = nil, nil
+local function BuyTripActive()
+	if not buyTrip then return false end
+	if os.clock() - buyTripAt > BUY_TRIP_MAX then
+		buyTrip = false
+		buyTripReason = ""
+		buyPause = false
+		print("[MS] BuyTrip auto-cleared after timeout")
+		return false
+	end
+	return true
+end
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 local GameGui = PlayerGui:WaitForChild("ScreenGui", 10)
@@ -152,7 +165,7 @@ end
 local function StartAutoMine()
 	task.spawn(function()
 		while Toggles["AutoMine"] do
-			if buyTrip then task.wait(0.3)
+			if BuyTripActive() then task.wait(0.3)
 			elseif areaTransit then task.wait(0.3)
 			elseif buyPause then
 				if os.clock() - buyPauseAt > 8 then buyPause = false else task.wait(0.3) end
@@ -190,7 +203,7 @@ end
 local function StartFastMine()
 	task.spawn(function()
 		while Toggles["FastMine"] do
-			if buyTrip then task.wait(0.3)
+			if BuyTripActive() then task.wait(0.3)
 			elseif areaTransit then task.wait(0.3)
 			elseif buyPause then
 				if os.clock() - buyPauseAt > 8 then buyPause = false else task.wait(0.3) end
@@ -224,7 +237,7 @@ local function StartAutoSell()
 	task.spawn(function()
 		while Toggles["AutoSell"] do
 			if not Remote then EnsureRemote() end
-			if buyTrip then
+			if BuyTripActive() then
 				task.wait(0.5)
 			elseif (rebirthDigging and Toggles["AutoRebirth"]) or areaTransit then
 				task.wait(0.5)
@@ -241,7 +254,7 @@ local function StartAutoSell()
 					local SavedPosition = HumanoidRootPart.Position
 					local sold = false
 					sellTrip = true
-					while Toggles["AutoSell"] and GetInventoryAmount() >= SellTreshold and not recovering do
+					while Toggles["AutoSell"] and not BuyTripActive() and GetInventoryAmount() >= SellTreshold and not recovering do
 						sold = true
 						Remote:FireServer("SellItems", {{}})
 						HumanoidRootPart.CFrame = SellArea
@@ -250,7 +263,7 @@ local function StartAutoSell()
 						local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
 						if freshHRP and freshHRP ~= HumanoidRootPart then break end
 					end
-					if sold then
+					if sold and not BuyTripActive() then
 						local freshChar = LocalPlayer.Character
 						local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
 						if freshHRP then
@@ -281,7 +294,7 @@ local function StartAutoRebirth()
 	pcall(function() game:GetService("RunService"):UnbindFromRenderStep("MS_AutoRebirth") end)
 	game:GetService("RunService"):BindToRenderStep("MS_AutoRebirth", Enum.RenderPriority.Camera.Value, function()
 		if not Toggles["AutoRebirth"] then return end
-		if buyTrip then return end
+		if BuyTripActive() then return end
 		if not Remote then EnsureRemote() end
 		if Rebirths and Remote then
 			while Toggles["AutoRebirth"] and GetCoinsAmount() >= (10000000 * (Rebirths.Value + 1)) do
@@ -308,7 +321,7 @@ local function StartAutoRebirth()
 		rebirthDigging = true
 		local nilStreak = 0
 		while Toggles["AutoRebirth"] and run == rebirthRunId do
-			if buyTrip then task.wait(0.3)
+			if BuyTripActive() then task.wait(0.3)
 			elseif buyPause then task.wait(0.3)
 			else
 				if not Remote then EnsureRemote() end
@@ -341,7 +354,7 @@ local function StartAutoRebirth()
 		rebirthDigging = false
 		rebirthPhaseText = "mining + selling..."
 		while Toggles["AutoRebirth"] and run == rebirthRunId do
-			if buyTrip then task.wait(0.3)
+			if BuyTripActive() then task.wait(0.3)
 			elseif buyPause then task.wait(0.3)
 			else
 				if not Remote then EnsureRemote() end
@@ -360,7 +373,7 @@ local function StartAutoRebirth()
 							task.wait()
 						end
 						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
-						if sellTrip or buyTrip then task.wait(0.3)
+						if sellTrip or BuyTripActive() then task.wait(0.3)
 						else
 						do
 							if SELL_TRESHOLD ~= nil then SellTreshold = SELL_TRESHOLD
@@ -369,7 +382,7 @@ local function StartAutoRebirth()
 						local SavedPosition = HumanoidRootPart.Position
 						local sold = false
 						sellTrip = true
-						while Toggles["AutoRebirth"] and run == rebirthRunId and GetInventoryAmount() >= SellTreshold and not recovering do
+						while Toggles["AutoRebirth"] and run == rebirthRunId and not BuyTripActive() and GetInventoryAmount() >= SellTreshold and not recovering do
 							sold = true
 							Remote:FireServer("SellItems", {{}})
 							HumanoidRootPart.CFrame = SellArea
@@ -378,7 +391,7 @@ local function StartAutoRebirth()
 							local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
 							if freshHRP and freshHRP ~= HumanoidRootPart then break end
 						end
-						if sold then
+						if sold and not BuyTripActive() then
 							local freshChar = LocalPlayer.Character
 							local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
 							if freshHRP then
@@ -747,6 +760,7 @@ EnterBuyTrip = function(reason)
 	local hrp0 = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 	if hrp0 then buyReturnPos = hrp0.Position end
 	buyTrip = true
+	buyTripAt = os.clock()
 	buyTripReason = tostring(reason or "")
 	buyPause, buyPauseAt = true, os.clock()
 	print("[MS] BuyTrip START (" .. buyTripReason .. ") - pausing mine/sell, surface for up to " .. tostring(BUY_TRIP_TIME) .. "s")
@@ -784,6 +798,7 @@ ExitBuyTrip = function()
 	buyTrip = false
 	buyTripReason = ""
 	buyReturnPos = nil
+	buyTripAt = 0
 	buyPause = false
 	print("[MS] BuyTrip END - resuming mine/sell")
 end
@@ -796,7 +811,7 @@ local function StartAutoBackpack()
 		while Toggles["AutoBackpack"] do
 			if not Remote then EnsureRemote() end
 			if not Remote then task.wait(1)
-			elseif buyTrip then
+			elseif BuyTripActive() then
 				lastBoughtPackText = "waiting (tools buying)..."
 				task.wait(0.5)
 			else
@@ -813,6 +828,7 @@ local function StartAutoBackpack()
 					else
 						local tripStart = os.clock()
 						local chained = 0
+						local tripOk, tripErr = pcall(function()
 						while Toggles["AutoBackpack"] and chained < 10 and os.clock() - tripStart < BUY_TRIP_TIME do
 							local coins = GetCoinsAmount()
 							local owned = ownedPackIndex(shop)
@@ -849,12 +865,15 @@ local function StartAutoBackpack()
 								break
 							end
 						end
+						end)
+						if not tripOk then print("[MS] Backpack trip error: " .. tostring(tripErr)) end
 						gearPackText = "max " .. tostring(select(2, GetInventoryAmount()))
 						ExitBuyTrip()
 					end
 				end
 				if not shop then
 					if EnterBuyTrip("Backpack blind") then
+						local blindOk = pcall(function()
 						local tries, i = 0, mem
 						while Toggles["AutoBackpack"] and tries < 10 and i <= 50 do
 							local before = snapPack()
@@ -871,6 +890,7 @@ local function StartAutoBackpack()
 							end
 							i = i + 1
 						end
+						end)
 						if mem > 50 then mem = 3 end
 						gearPackText = "max " .. tostring(select(2, GetInventoryAmount()))
 						ExitBuyTrip()
@@ -894,7 +914,7 @@ local function StartAutoTools()
 		while Toggles["AutoTools"] do
 			if not Remote then EnsureRemote() end
 			if not Remote then task.wait(1)
-			elseif buyTrip then
+			elseif BuyTripActive() then
 				lastBoughtToolText = "waiting (pack buying)..."
 				task.wait(0.5)
 			else
@@ -911,6 +931,7 @@ local function StartAutoTools()
 					else
 						local tripStart = os.clock()
 						local chained = 0
+						local tripOk, tripErr = pcall(function()
 						while Toggles["AutoTools"] and chained < 10 and os.clock() - tripStart < BUY_TRIP_TIME do
 							local coins = GetCoinsAmount()
 							local owned = ownedToolIndex(shop)
@@ -954,12 +975,15 @@ local function StartAutoTools()
 								break
 							end
 						end
+						end)
+						if not tripOk then print("[MS] Tool trip error: " .. tostring(tripErr)) end
 						gearToolText = bestToolName()
 						ExitBuyTrip()
 					end
 				end
 				if not shop then
 					if EnterBuyTrip("Tool blind") then
+						pcall(function()
 						local tries, i = 0, mem
 						while Toggles["AutoTools"] and tries < 10 and i <= 50 do
 							local before = snapTool()
@@ -977,6 +1001,7 @@ local function StartAutoTools()
 							end
 							i = i + 1
 						end
+						end)
 						if mem > 50 then mem = 1 end
 						gearToolText = bestToolName()
 						ExitBuyTrip()
@@ -1366,7 +1391,7 @@ task.spawn(function()
 				MiscStatus:SetDesc(string.format("depth %s / target %s | coins %s | rebirth %s", tostring(curDepth), tostring(Depth), tostring(GetCoinsAmount()), tostring(rebirthPhaseText)))
 			end
 			AreaStatus:SetDesc(tostring(areaPhaseText))
-			local tripTxt = buyTrip and (" | SURFACE BUYING " .. tostring(buyTripReason)) or ""
+			local tripTxt = (BuyTripActive() and buyTripReason ~= "") and (" | SURFACE BUYING " .. tostring(buyTripReason)) or (BuyTripActive() and " | SURFACE BUYING" or "")
 			GearStatus:SetDesc(string.format("tool %s (%s) | pack %s (%s)%s%s", tostring(gearToolText), tostring(lastBoughtToolText), tostring(gearPackText), tostring(lastBoughtPackText), lastToolTryText ~= "" and (" | " .. lastToolTryText) or "", tripTxt))
 		end)
 		task.wait(0.5)

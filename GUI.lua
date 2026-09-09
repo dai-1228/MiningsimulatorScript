@@ -100,6 +100,14 @@ local myGen = getgenv().__MS_Gen
 local buyPause, buyPauseAt = false, 0
 local lastMineSpot = nil
 local sellTrip = false
+local areaTransit = false
+local rebirthDigging = false
+local buyTrip = false
+local buyTripReason = ""
+local buyReturnPos = nil
+local SurfaceCFrame = CFrame.new(-86, 14, -12)
+local BUY_TRIP_TIME = 10
+local EnterBuyTrip, ExitBuyTrip = nil, nil
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 local GameGui = PlayerGui:WaitForChild("ScreenGui", 10)
@@ -144,7 +152,8 @@ end
 local function StartAutoMine()
 	task.spawn(function()
 		while Toggles["AutoMine"] do
-			if areaTransit then task.wait(0.3)
+			if buyTrip then task.wait(0.3)
+			elseif areaTransit then task.wait(0.3)
 			elseif buyPause then
 				if os.clock() - buyPauseAt > 8 then buyPause = false else task.wait(0.3) end
 			else
@@ -181,7 +190,8 @@ end
 local function StartFastMine()
 	task.spawn(function()
 		while Toggles["FastMine"] do
-			if areaTransit then task.wait(0.3)
+			if buyTrip then task.wait(0.3)
+			elseif areaTransit then task.wait(0.3)
 			elseif buyPause then
 				if os.clock() - buyPauseAt > 8 then buyPause = false else task.wait(0.3) end
 			else
@@ -214,7 +224,9 @@ local function StartAutoSell()
 	task.spawn(function()
 		while Toggles["AutoSell"] do
 			if not Remote then EnsureRemote() end
-			if (rebirthDigging and Toggles["AutoRebirth"]) or areaTransit then
+			if buyTrip then
+				task.wait(0.5)
+			elseif (rebirthDigging and Toggles["AutoRebirth"]) or areaTransit then
 				task.wait(0.5)
 			elseif Remote then
 				local Character = LocalPlayer.Character
@@ -264,11 +276,12 @@ end
 
 local rebirthRunId = 0
 local rebirthPhaseText = "off"
-local rebirthDigging = false
+rebirthDigging = false
 local function StartAutoRebirth()
 	pcall(function() game:GetService("RunService"):UnbindFromRenderStep("MS_AutoRebirth") end)
 	game:GetService("RunService"):BindToRenderStep("MS_AutoRebirth", Enum.RenderPriority.Camera.Value, function()
 		if not Toggles["AutoRebirth"] then return end
+		if buyTrip then return end
 		if not Remote then EnsureRemote() end
 		if Rebirths and Remote then
 			while Toggles["AutoRebirth"] and GetCoinsAmount() >= (10000000 * (Rebirths.Value + 1)) do
@@ -295,7 +308,8 @@ local function StartAutoRebirth()
 		rebirthDigging = true
 		local nilStreak = 0
 		while Toggles["AutoRebirth"] and run == rebirthRunId do
-			if buyPause then task.wait(0.3)
+			if buyTrip then task.wait(0.3)
+			elseif buyPause then task.wait(0.3)
 			else
 				if not Remote then EnsureRemote() end
 				if not Remote then task.wait(1)
@@ -327,7 +341,8 @@ local function StartAutoRebirth()
 		rebirthDigging = false
 		rebirthPhaseText = "mining + selling..."
 		while Toggles["AutoRebirth"] and run == rebirthRunId do
-			if buyPause then task.wait(0.3)
+			if buyTrip then task.wait(0.3)
+			elseif buyPause then task.wait(0.3)
 			else
 				if not Remote then EnsureRemote() end
 				if not Remote then task.wait(1)
@@ -345,7 +360,7 @@ local function StartAutoRebirth()
 							task.wait()
 						end
 						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
-						if sellTrip then task.wait(0.3)
+						if sellTrip or buyTrip then task.wait(0.3)
 						else
 						do
 							if SELL_TRESHOLD ~= nil then SellTreshold = SELL_TRESHOLD
@@ -714,6 +729,65 @@ local function awaitPack(before, timeout)
 	return false
 end
 
+EnterBuyTrip = function(reason)
+	if buyTrip then return false end
+	if areaTransit then
+		print("[MS] BuyTrip SKIP (" .. tostring(reason) .. "): area run in progress, will retry after")
+		return false
+	end
+	local t0 = os.clock()
+	while sellTrip and os.clock() - t0 < 5 do
+		if not (Toggles["AutoBackpack"] or Toggles["AutoTools"]) then return false end
+		task.wait(0.2)
+	end
+	if sellTrip then
+		print("[MS] BuyTrip SKIP (" .. tostring(reason) .. "): sell trip still busy")
+		return false
+	end
+	local hrp0 = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if hrp0 then buyReturnPos = hrp0.Position end
+	buyTrip = true
+	buyTripReason = tostring(reason or "")
+	buyPause, buyPauseAt = true, os.clock()
+	print("[MS] BuyTrip START (" .. buyTripReason .. ") - pausing mine/sell, surface for up to " .. tostring(BUY_TRIP_TIME) .. "s")
+	pcall(function()
+		for _ = 1, 3 do
+			local c = LocalPlayer.Character
+			local h = c and c:FindFirstChild("HumanoidRootPart")
+			if not h then break end
+			h.CFrame = SurfaceCFrame
+			task.wait(0.3)
+			c = LocalPlayer.Character
+			h = c and c:FindFirstChild("HumanoidRootPart")
+			if h and (h.Position - SurfaceCFrame.Position).Magnitude <= 20 then break end
+		end
+	end)
+	return true
+end
+
+ExitBuyTrip = function()
+	if not buyTrip then buyPause = false return end
+	pcall(function()
+		if buyReturnPos then
+			for _ = 1, 3 do
+				local c = LocalPlayer.Character
+				local h = c and c:FindFirstChild("HumanoidRootPart")
+				if not h then break end
+				h.CFrame = CFrame.new(buyReturnPos)
+				task.wait(0.3)
+				c = LocalPlayer.Character
+				h = c and c:FindFirstChild("HumanoidRootPart")
+				if h and (h.Position - buyReturnPos).Magnitude <= 15 then break end
+			end
+		end
+	end)
+	buyTrip = false
+	buyTripReason = ""
+	buyReturnPos = nil
+	buyPause = false
+	print("[MS] BuyTrip END - resuming mine/sell")
+end
+
 local function StartAutoBackpack()
 	local mem = 3
 	local fails = 0
@@ -722,65 +796,87 @@ local function StartAutoBackpack()
 		while Toggles["AutoBackpack"] do
 			if not Remote then EnsureRemote() end
 			if not Remote then task.wait(1)
+			elseif buyTrip then
+				lastBoughtPackText = "waiting (tools buying)..."
+				task.wait(0.5)
 			else
 				local bought = 0
 				local shop = discoverShop().packs
 				if shop then
-					local chained = 0
-					while Toggles["AutoBackpack"] and chained < 10 do
-						local coins = GetCoinsAmount()
-						local owned = ownedPackIndex(shop)
-						local idx, why = bestBuy(shop, owned, 3, coins, "Backpack")
-						if not idx then
-							lastBoughtPackText = (why == "MAX") and "MAX (best owned)" or "saving (next too pricey)"
-							break
-						end
-						local before = snapPack()
-						buyPause, buyPauseAt = true, os.clock()
-						Remote:FireServer("BuyItem", {{"Backpack", idx}})
-						local changed = awaitPack(before, 0.9)
-						buyPause = false
-						if changed then
-							bought = bought + 1
-							chained = chained + 1
-							lastBoughtPackText = "Pack #" .. tostring(idx)
-							mem = idx + 1
-							timeoutIdx, timeoutStreak = nil, 0
-						elseif timeoutIdx == idx then
-							timeoutStreak = timeoutStreak + 1
-							if timeoutStreak >= 3 then
-								refusedBuy["Backpack#" .. idx] = true
+					local peekCoins = GetCoinsAmount()
+					local peekOwned = ownedPackIndex(shop)
+					local peekIdx, peekWhy = bestBuy(shop, peekOwned, 3, peekCoins, "Backpack")
+					if not peekIdx then
+						lastBoughtPackText = (peekWhy == "MAX") and "MAX (best owned)" or "saving (next too pricey)"
+					elseif not EnterBuyTrip("Backpack #" .. tostring(peekIdx)) then
+						task.wait(0.5)
+					else
+						local tripStart = os.clock()
+						local chained = 0
+						while Toggles["AutoBackpack"] and chained < 10 and os.clock() - tripStart < BUY_TRIP_TIME do
+							local coins = GetCoinsAmount()
+							local owned = ownedPackIndex(shop)
+							local idx, why = bestBuy(shop, owned, 3, coins, "Backpack")
+							if not idx then
+								lastBoughtPackText = (why == "MAX") and "MAX (best owned)" or "saving (next too pricey)"
+								break
+							end
+							lastBoughtPackText = "surface buying Pack #" .. tostring(idx) .. "..."
+							local before = snapPack()
+							buyPause, buyPauseAt = true, os.clock()
+							pcall(function() Remote:FireServer("BuyItem", {{"Backpack", idx}}) end)
+							local changed = awaitPack(before, 0.9)
+							if changed then
+								bought = bought + 1
+								chained = chained + 1
+								lastBoughtPackText = "Pack #" .. tostring(idx)
 								mem = idx + 1
 								timeoutIdx, timeoutStreak = nil, 0
+							elseif timeoutIdx == idx then
+								timeoutStreak = timeoutStreak + 1
+								if timeoutStreak >= 3 then
+									refusedBuy["Backpack#" .. idx] = true
+									mem = idx + 1
+									timeoutIdx, timeoutStreak = nil, 0
+									print("[MS] Backpack #" .. tostring(idx) .. " refused 3x, skipping. Coins=" .. tostring(GetCoinsAmount()))
+								else
+									print("[MS] Backpack #" .. tostring(idx) .. " no change (" .. tostring(timeoutStreak) .. "x). Coins=" .. tostring(GetCoinsAmount()) .. " ownedIdx=" .. tostring(owned))
+								end
+								break
+							else
+								timeoutIdx, timeoutStreak = idx, 1
+								print("[MS] Backpack #" .. tostring(idx) .. " no change. Coins=" .. tostring(GetCoinsAmount()) .. " ownedIdx=" .. tostring(owned))
+								break
 							end
-							break
-						else
-							timeoutIdx, timeoutStreak = idx, 1
-							break
 						end
+						gearPackText = "max " .. tostring(select(2, GetInventoryAmount()))
+						ExitBuyTrip()
 					end
-					gearPackText = "max " .. tostring(select(2, GetInventoryAmount()))
 				end
 				if not shop then
-					local tries, i = 0, mem
-					while Toggles["AutoBackpack"] and tries < 10 and i <= 50 do
-						local before = snapPack()
-						buyPause, buyPauseAt = true, os.clock()
-						Remote:FireServer("BuyItem", {{"Backpack", i}})
-						task.wait(0.3)
-						buyPause = false
-						tries = tries + 1
-						if packChanged(before, snapPack()) then
-							bought = bought + 1
-							lastBoughtPackText = "Pack #" .. tostring(i)
-							mem = i + 1
-						else
-							mem = i + 1
+					if EnterBuyTrip("Backpack blind") then
+						local tries, i = 0, mem
+						while Toggles["AutoBackpack"] and tries < 10 and i <= 50 do
+							local before = snapPack()
+							buyPause, buyPauseAt = true, os.clock()
+							pcall(function() Remote:FireServer("BuyItem", {{"Backpack", i}}) end)
+							task.wait(0.3)
+							tries = tries + 1
+							if packChanged(before, snapPack()) then
+								bought = bought + 1
+								lastBoughtPackText = "Pack #" .. tostring(i)
+								mem = i + 1
+							else
+								mem = i + 1
+							end
+							i = i + 1
 						end
-						i = i + 1
+						if mem > 50 then mem = 3 end
+						gearPackText = "max " .. tostring(select(2, GetInventoryAmount()))
+						ExitBuyTrip()
+					else
+						task.wait(0.5)
 					end
-					if mem > 50 then mem = 3 end
-					gearPackText = "max " .. tostring(select(2, GetInventoryAmount()))
 				end
 				fails = (bought == 0) and fails + 1 or 0
 				if bought == 0 and fails >= 3 and lastBoughtPackText == "none yet" then lastBoughtPackText = "MAX / nothing to buy" end
@@ -798,76 +894,95 @@ local function StartAutoTools()
 		while Toggles["AutoTools"] do
 			if not Remote then EnsureRemote() end
 			if not Remote then task.wait(1)
+			elseif buyTrip then
+				lastBoughtToolText = "waiting (pack buying)..."
+				task.wait(0.5)
 			else
 				local bought = 0
 				local shop = discoverShop().tools
 				if shop then
-					local chained = 0
-					while Toggles["AutoTools"] and chained < 10 do
-						local coins = GetCoinsAmount()
-						local owned = ownedToolIndex(shop)
-						local idx, why = bestBuy(shop, owned, 1, coins, "Tools")
-						if not idx then
-							lastBoughtToolText = (why == "MAX") and "MAX (best owned)" or "saving (next too pricey)"
-							break
-						end
-						local before = snapTool()
-						buyPause, buyPauseAt = true, os.clock()
-						Remote:FireServer("BuyItem", {{"Tools", idx}})
-						task.wait(0.35)
-						pcall(function()
-							Remote:FireServer("EquipItem", {{"Tools", entryName(shop[idx], idx)}})
-						end)
-						local changed = awaitTool(before, 2.0)
-						buyPause = false
-						if changed then
-							bought = bought + 1
-							chained = chained + 1
-							lastBoughtToolText = "Tool #" .. tostring(idx)
-							gearToolText = bestToolName()
-							mem = idx + 1
-							timeoutIdx, timeoutStreak = nil, 0
-							lastToolTryText = ""
-						else
-							local nowC = GetCoinsAmount()
-							local wasC = (before and before.coins) or 0
-							lastToolTryText = string.format("T#%d ~%s coins %s->%s owned#%s", idx, tostring(shopPrice(shop[idx], "Tools") or "?"), tostring(wasC), tostring(nowC), tostring(owned))
-							if timeoutIdx == idx then
-								timeoutStreak = timeoutStreak + 1
-								if timeoutStreak >= 3 then
-									refusedBuy["Tools#" .. idx] = true
-									mem = idx + 1
-									timeoutIdx, timeoutStreak = nil, 0
-								end
-							else
-								timeoutIdx, timeoutStreak = idx, 1
+					local peekCoins = GetCoinsAmount()
+					local peekOwned = ownedToolIndex(shop)
+					local peekIdx, peekWhy = bestBuy(shop, peekOwned, 1, peekCoins, "Tools")
+					if not peekIdx then
+						lastBoughtToolText = (peekWhy == "MAX") and "MAX (best owned)" or "saving (next too pricey)"
+					elseif not EnterBuyTrip("Tool #" .. tostring(peekIdx)) then
+						task.wait(0.5)
+					else
+						local tripStart = os.clock()
+						local chained = 0
+						while Toggles["AutoTools"] and chained < 10 and os.clock() - tripStart < BUY_TRIP_TIME do
+							local coins = GetCoinsAmount()
+							local owned = ownedToolIndex(shop)
+							local idx, why = bestBuy(shop, owned, 1, coins, "Tools")
+							if not idx then
+								lastBoughtToolText = (why == "MAX") and "MAX (best owned)" or "saving (next too pricey)"
+								break
 							end
-							break
+							lastBoughtToolText = "surface buying Tool #" .. tostring(idx) .. "..."
+							local before = snapTool()
+							buyPause, buyPauseAt = true, os.clock()
+							pcall(function() Remote:FireServer("BuyItem", {{"Tools", idx}}) end)
+							task.wait(0.35)
+							pcall(function()
+								Remote:FireServer("EquipItem", {{"Tools", entryName(shop[idx], idx)}})
+							end)
+							local changed = awaitTool(before, 2.0)
+							if changed then
+								bought = bought + 1
+								chained = chained + 1
+								lastBoughtToolText = "Tool #" .. tostring(idx)
+								gearToolText = bestToolName()
+								mem = idx + 1
+								timeoutIdx, timeoutStreak = nil, 0
+								lastToolTryText = ""
+							else
+								local nowC = GetCoinsAmount()
+								local wasC = (before and before.coins) or 0
+								lastToolTryText = string.format("T#%d ~%s coins %s->%s owned#%s", idx, tostring(shopPrice(shop[idx], "Tools") or "?"), tostring(wasC), tostring(nowC), tostring(owned))
+								print("[MS] Tool #" .. tostring(idx) .. " no change. " .. lastToolTryText)
+								if timeoutIdx == idx then
+									timeoutStreak = timeoutStreak + 1
+									if timeoutStreak >= 3 then
+										refusedBuy["Tools#" .. idx] = true
+										mem = idx + 1
+										timeoutIdx, timeoutStreak = nil, 0
+									end
+								else
+									timeoutIdx, timeoutStreak = idx, 1
+								end
+								break
+							end
 						end
+						gearToolText = bestToolName()
+						ExitBuyTrip()
 					end
-					gearToolText = bestToolName()
 				end
 				if not shop then
-					local tries, i = 0, mem
-					while Toggles["AutoTools"] and tries < 10 and i <= 50 do
-						local before = snapTool()
-						buyPause, buyPauseAt = true, os.clock()
-						Remote:FireServer("BuyItem", {{"Tools", i}})
-						task.wait(0.3)
-						buyPause = false
-						tries = tries + 1
-						if toolChanged(before, snapTool()) then
-							bought = bought + 1
-							lastBoughtToolText = "Tool #" .. tostring(i)
-							gearToolText = bestToolName()
-							mem = i + 1
-						else
-							mem = i + 1
+					if EnterBuyTrip("Tool blind") then
+						local tries, i = 0, mem
+						while Toggles["AutoTools"] and tries < 10 and i <= 50 do
+							local before = snapTool()
+							buyPause, buyPauseAt = true, os.clock()
+							pcall(function() Remote:FireServer("BuyItem", {{"Tools", i}}) end)
+							task.wait(0.3)
+							tries = tries + 1
+							if toolChanged(before, snapTool()) then
+								bought = bought + 1
+								lastBoughtToolText = "Tool #" .. tostring(i)
+								gearToolText = bestToolName()
+								mem = i + 1
+							else
+								mem = i + 1
+							end
+							i = i + 1
 						end
-						i = i + 1
+						if mem > 50 then mem = 1 end
+						gearToolText = bestToolName()
+						ExitBuyTrip()
+					else
+						task.wait(0.5)
 					end
-					if mem > 50 then mem = 1 end
-					gearToolText = bestToolName()
 				end
 				fails = (bought == 0) and fails + 1 or 0
 				if bought == 0 and fails >= 3 and lastBoughtToolText == "none yet" then lastBoughtToolText = "MAX / nothing to buy" end
@@ -894,7 +1009,7 @@ local Areas = {
 }
 local areaRunId = 0
 local areaPhaseText = "off"
-local areaTransit = false
+areaTransit = false
 local function StopAreaRun()
 	areaRunId = areaRunId + 1
 	areaPhaseText = "off"
@@ -1155,7 +1270,7 @@ MiscTab:Toggle({
 
 MiscTab:Toggle({
 	Title = "Auto Backpack",
-	Desc = "Buys next missing pack 3-50, stops at MAX",
+	Desc = "When affordable: pause mine/sell, surface 10s, buy, return",
 	Value = false,
 	Callback = function(state)
 		Toggles["AutoBackpack"] = state
@@ -1165,7 +1280,7 @@ MiscTab:Toggle({
 
 MiscTab:Toggle({
 	Title = "Auto Tools",
-	Desc = "Buys next missing tool 1-50, stops at MAX",
+	Desc = "When affordable: pause mine/sell, surface 10s, buy+equip, return",
 	Value = false,
 	Callback = function(state)
 		Toggles["AutoTools"] = state
@@ -1251,7 +1366,8 @@ task.spawn(function()
 				MiscStatus:SetDesc(string.format("depth %s / target %s | coins %s | rebirth %s", tostring(curDepth), tostring(Depth), tostring(GetCoinsAmount()), tostring(rebirthPhaseText)))
 			end
 			AreaStatus:SetDesc(tostring(areaPhaseText))
-			GearStatus:SetDesc(string.format("tool %s (%s) | pack %s (%s)%s", tostring(gearToolText), tostring(lastBoughtToolText), tostring(gearPackText), tostring(lastBoughtPackText), lastToolTryText ~= "" and (" | " .. lastToolTryText) or ""))
+			local tripTxt = buyTrip and (" | SURFACE BUYING " .. tostring(buyTripReason)) or ""
+			GearStatus:SetDesc(string.format("tool %s (%s) | pack %s (%s)%s%s", tostring(gearToolText), tostring(lastBoughtToolText), tostring(gearPackText), tostring(lastBoughtPackText), lastToolTryText ~= "" and (" | " .. lastToolTryText) or "", tripTxt))
 		end)
 		task.wait(0.5)
 	end

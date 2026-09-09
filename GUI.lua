@@ -222,14 +222,27 @@ local function StartAutoSell()
 					end
 					local SavedPosition = HumanoidRootPart.Position
 					local sold = false
-					while GetInventoryAmount() >= SellTreshold and not recovering do
+					while Toggles["AutoSell"] and GetInventoryAmount() >= SellTreshold and not recovering do
 						sold = true
 						Remote:FireServer("SellItems", {{}})
 						HumanoidRootPart.CFrame = SellArea
 						task.wait()
+						local freshChar = LocalPlayer.Character
+						local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+						if freshHRP and freshHRP ~= HumanoidRootPart then break end
 					end
 					if sold then
-						HumanoidRootPart.CFrame = CFrame.new(SavedPosition)
+						local freshChar = LocalPlayer.Character
+						local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+						if freshHRP then
+							for _ = 1, 3 do
+								freshHRP.CFrame = CFrame.new(SavedPosition)
+								task.wait(0.3)
+								freshChar = LocalPlayer.Character
+								freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+								if freshHRP and (freshHRP.Position - SavedPosition).Magnitude <= 15 then break end
+							end
+						end
 					end
 				end
 			else
@@ -333,9 +346,22 @@ local function StartAutoRebirth()
 							Remote:FireServer("SellItems", {{}})
 							HumanoidRootPart.CFrame = SellArea
 							task.wait()
+							local freshChar = LocalPlayer.Character
+							local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+							if freshHRP and freshHRP ~= HumanoidRootPart then break end
 						end
 						if sold then
-							HumanoidRootPart.CFrame = CFrame.new(SavedPosition)
+							local freshChar = LocalPlayer.Character
+							local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+							if freshHRP then
+								for _ = 1, 3 do
+									freshHRP.CFrame = CFrame.new(SavedPosition)
+									task.wait(0.3)
+									freshChar = LocalPlayer.Character
+									freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+									if freshHRP and (freshHRP.Position - SavedPosition).Magnitude <= 15 then break end
+								end
+							end
 						end
 					end
 				end
@@ -907,8 +933,18 @@ local function StartAreaRun(area)
 		end
 		if not alive() then clearTransit() return end
 		HRP.Anchored = true
-		HRP.CFrame = CFrame.new(area.spawn)
-		task.wait(1)
+		Character = LocalPlayer.Character
+		HRP = Character and Character:FindFirstChild("HumanoidRootPart")
+		if not HRP then areaPhaseText = "no character" clearTransit() return end
+		for _ = 1, 3 do
+			HRP.CFrame = CFrame.new(area.spawn)
+			task.wait(0.5)
+			Character = LocalPlayer.Character
+			HRP = Character and Character:FindFirstChild("HumanoidRootPart")
+			if HRP and (HRP.Position - area.spawn).Magnitude <= 15 then break end
+		end
+		if not HRP or (HRP.Position - area.spawn).Magnitude > 15 then areaPhaseText = "stuck" clearTransit() return end
+		task.wait(0.5)
 		pcall(function()
 			local old = workspace:FindFirstChild("MS_AreaBridge")
 			if old then old:Destroy() end
@@ -948,7 +984,18 @@ local function StartAreaRun(area)
 		areaPhaseText = area.name .. ": to mine spot..."
 		Character = LocalPlayer.Character
 		HRP = Character and Character:FindFirstChild("HumanoidRootPart")
-		if HRP then HRP.CFrame = CFrame.new(area.mine) end
+		if HRP then
+			HRP.Anchored = true
+			for _ = 1, 3 do
+				HRP.CFrame = CFrame.new(area.mine)
+				task.wait(0.5)
+				Character = LocalPlayer.Character
+				HRP = Character and Character:FindFirstChild("HumanoidRootPart")
+				if HRP and (HRP.Position - area.mine).Magnitude <= 15 then break end
+			end
+			if HRP then HRP.Anchored = false end
+		end
+		if not HRP or (HRP.Position - area.mine).Magnitude > 15 then areaPhaseText = "stuck" clearTransit() return end
 		task.wait(0.5)
 		if not alive() then clearTransit() return end
 		areaPhaseText = area.name .. ": running autorebirth..."

@@ -98,6 +98,8 @@ getgenv().__MS_Toggles = Toggles
 getgenv().__MS_Gen = (getgenv().__MS_Gen or 0) + 1
 local myGen = getgenv().__MS_Gen
 local buyPause, buyPauseAt = false, 0
+local lastMineSpot = nil
+local sellTrip = false
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 local GameGui = PlayerGui:WaitForChild("ScreenGui", 10)
@@ -162,6 +164,7 @@ local function StartAutoMine()
 							Remote:FireServer("MineBlock",{{block.Parent}})
 							task.wait()
 						end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
 					else
 						task.wait(0.5)
 					end
@@ -191,12 +194,13 @@ local function StartFastMine()
 					local maxp = HumanoidRootPart.CFrame.Position + Vector3.new(5, 5, 5)
 					local region = Region3.new(minp, maxp)
 					local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 50)
-					for _, block in ipairs(parts) do
-						if not Toggles["FastMine"] then break end
-						Remote:FireServer("MineBlock", {{block.Parent}})
-						task.wait()
+						for _, block in ipairs(parts) do
+							if not Toggles["FastMine"] then break end
+							Remote:FireServer("MineBlock", {{block.Parent}})
+							task.wait()
+						end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
 					end
-				end
 			else
 				task.wait(1)
 			end
@@ -216,12 +220,15 @@ local function StartAutoSell()
 				local Character = LocalPlayer.Character
 				local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
 				if HumanoidRootPart then
+					if sellTrip then task.wait(0.3)
+					else
 					do
 						if SELL_TRESHOLD ~= nil then SellTreshold = SELL_TRESHOLD
 						else local _, packMax = GetInventoryAmount() if packMax and packMax > 0 then SellTreshold = packMax end end
 					end
 					local SavedPosition = HumanoidRootPart.Position
 					local sold = false
+					sellTrip = true
 					while Toggles["AutoSell"] and GetInventoryAmount() >= SellTreshold and not recovering do
 						sold = true
 						Remote:FireServer("SellItems", {{}})
@@ -243,6 +250,8 @@ local function StartAutoSell()
 								if freshHRP and (freshHRP.Position - SavedPosition).Magnitude <= 15 then break end
 							end
 						end
+					end
+					sellTrip = false
 					end
 				end
 			else
@@ -335,12 +344,16 @@ local function StartAutoRebirth()
 							Remote:FireServer("MineBlock", {{block.Parent}})
 							task.wait()
 						end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
+						if sellTrip then task.wait(0.3)
+						else
 						do
 							if SELL_TRESHOLD ~= nil then SellTreshold = SELL_TRESHOLD
 							else local _, packMax = GetInventoryAmount() if packMax and packMax > 0 then SellTreshold = packMax end end
 						end
 						local SavedPosition = HumanoidRootPart.Position
 						local sold = false
+						sellTrip = true
 						while Toggles["AutoRebirth"] and run == rebirthRunId and GetInventoryAmount() >= SellTreshold and not recovering do
 							sold = true
 							Remote:FireServer("SellItems", {{}})
@@ -362,6 +375,8 @@ local function StartAutoRebirth()
 									if freshHRP and (freshHRP.Position - SavedPosition).Magnitude <= 15 then break end
 								end
 							end
+						end
+						sellTrip = false
 						end
 					end
 				end
@@ -1201,6 +1216,21 @@ local AreaStatus = AreasTab:Paragraph({
 	Title = "Area status",
 	Desc = "off",
 })
+
+task.spawn(function()
+	while Window and getgenv().__MS_Gen == myGen do
+		pcall(function()
+			if lastMineSpot and not sellTrip and not areaTransit then
+				local c = LocalPlayer.Character
+				local h = c and c:FindFirstChild("HumanoidRootPart")
+				if h and (h.Position - lastMineSpot).Magnitude > 150 then
+					h.CFrame = CFrame.new(lastMineSpot)
+				end
+			end
+		end)
+		task.wait(1)
+	end
+end)
 
 task.spawn(function()
 	while Window and getgenv().__MS_Gen == myGen do

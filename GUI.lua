@@ -113,6 +113,8 @@ local buyTripAt = 0
 local SurfaceCFrame = CFrame.new(-86, 14, -12)
 local BUY_TRIP_TIME = 10
 local BUY_TRIP_MAX = 15
+local BUY_TRIP_COOLDOWN = 20
+local lastBuyTripEnd = 0
 local EnterBuyTrip, ExitBuyTrip = nil, nil
 local function BuyTripActive()
 	if not buyTrip then return false end
@@ -826,6 +828,7 @@ ExitBuyTrip = function()
 	buyTripReason = ""
 	buyReturnPos = nil
 	buyTripAt = 0
+	lastBuyTripEnd = os.clock()
 	buyPause = false
 	print("[MS] BuyTrip END - resuming mine/sell")
 end
@@ -844,7 +847,14 @@ local function StartAutoBackpack()
 			else
 				local bought = 0
 				local shop = discoverShop().packs
-				if shop then
+				local pendInv = GetInventoryAmount()
+				if (Toggles["AutoSell"] or Toggles["AutoRebirth"]) and pendInv >= SellTreshold then
+					lastBoughtPackText = "waiting for sell..."
+					task.wait(1)
+				elseif os.clock() - lastBuyTripEnd < BUY_TRIP_COOLDOWN then
+					lastBoughtPackText = "cooling down..."
+					task.wait(2)
+				elseif shop then
 					local peekCoins = GetCoinsAmount()
 					local peekOwned = ownedPackIndex(shop)
 					local peekIdx, peekWhy = bestBuy(shop, peekOwned, 3, peekCoins, "Backpack")
@@ -947,7 +957,14 @@ local function StartAutoTools()
 			else
 				local bought = 0
 				local shop = discoverShop().tools
-				if shop then
+				local pendInv = GetInventoryAmount()
+				if (Toggles["AutoSell"] or Toggles["AutoRebirth"]) and pendInv >= SellTreshold then
+					lastBoughtToolText = "waiting for sell..."
+					task.wait(1)
+				elseif os.clock() - lastBuyTripEnd < BUY_TRIP_COOLDOWN then
+					lastBoughtToolText = "cooling down..."
+					task.wait(2)
+				elseif shop then
 					local peekCoins = GetCoinsAmount()
 					local peekOwned = ownedToolIndex(shop)
 					local peekIdx, peekWhy = bestBuy(shop, peekOwned, 1, peekCoins, "Tools")

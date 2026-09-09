@@ -1082,7 +1082,10 @@ SellTab:Toggle({
 
 local syncingThreshold = false
 local sellEchoUntil = 0
+local depthEchoUntil = 0
+local syncingDepth = false
 local SellInput
+local DepthInput
 local SellStatus = SellTab:Paragraph({
 	Title = "Inventory",
 	Desc = "waiting...",
@@ -1170,24 +1173,41 @@ MiscTab:Toggle({
 	end
 })
 
-MiscTab:Input({
+local MiscStatus = MiscTab:Paragraph({
 	Title = "Depth",
-	Desc = "Target for the Limit depth toggle (default 205). Type + ENTER.",
+	Desc = "waiting...",
+})
+
+DepthInput = MiscTab:Input({
+	Title = "Depth",
+	Desc = "Dig target for AutoRebirth (default 205). Type + ENTER.",
 	Type = "Input",
 	Value = tostring(Depth),
 	Placeholder = "e.g. 205",
 	Callback = function(input)
-		local typed = tonumber(tostring(input or ""):gsub(",", ""):gsub("%s+", ""))
-		if typed then
-			Depth = math.clamp(math.floor(typed), 0, 5000)
-			getgenv().Depth = Depth
+		if syncingDepth then return end
+		local ok, err = pcall(function()
+			local raw = tostring(input or "")
+			local digits = raw:gsub(",", ""):match("%d+")
+			local typed = digits and tonumber(digits)
+			if typed then
+				Depth = math.clamp(math.floor(typed), 0, 5000)
+				getgenv().Depth = Depth
+				syncingDepth = true
+				pcall(function() if DepthInput then DepthInput:Set(tostring(Depth)) end end)
+				syncingDepth = false
+				depthEchoUntil = os.clock() + 5
+				MiscStatus:SetDesc("depth target " .. tostring(Depth) .. " (got [" .. raw .. "])")
+			else
+				depthEchoUntil = os.clock() + 5
+				MiscStatus:SetDesc("ignored [" .. raw .. "] - type a number")
+			end
+		end)
+		if not ok then
+			depthEchoUntil = os.clock() + 5
+			pcall(function() MiscStatus:SetDesc("input error: " .. tostring(err)) end)
 		end
 	end
-})
-
-local MiscStatus = MiscTab:Paragraph({
-	Title = "Depth",
-	Desc = "waiting...",
 })
 
 local GearStatus = MiscTab:Paragraph({
@@ -1227,7 +1247,9 @@ task.spawn(function()
 			if os.clock() >= sellEchoUntil then
 				SellStatus:SetDesc(string.format("inv %s/%s | threshold %s", tostring(curInv), tostring(maxInv), sellTxt))
 			end
-			MiscStatus:SetDesc(string.format("depth %s / target %s | coins %s | rebirth %s", tostring(curDepth), tostring(Depth), tostring(GetCoinsAmount()), tostring(rebirthPhaseText)))
+			if os.clock() >= depthEchoUntil then
+				MiscStatus:SetDesc(string.format("depth %s / target %s | coins %s | rebirth %s", tostring(curDepth), tostring(Depth), tostring(GetCoinsAmount()), tostring(rebirthPhaseText)))
+			end
 			AreaStatus:SetDesc(tostring(areaPhaseText))
 			GearStatus:SetDesc(string.format("tool %s (%s) | pack %s (%s)%s", tostring(gearToolText), tostring(lastBoughtToolText), tostring(gearPackText), tostring(lastBoughtPackText), lastToolTryText ~= "" and (" | " .. lastToolTryText) or ""))
 		end)

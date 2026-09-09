@@ -92,6 +92,7 @@ local Toggles = getgenv().__MS_Toggles or {
 	AutoBackpack = false,
 	AutoTools = false,
 	AutoRebirth = false,
+	RebirthOnly = false,
 	LimitDepth = false
 }
 for k in pairs(Toggles) do Toggles[k] = false end
@@ -420,6 +421,28 @@ local function StopAutoRebirth()
 	rebirthPhaseText = "off"
 	rebirthDigging = false
 	pcall(function() game:GetService("RunService"):UnbindFromRenderStep("MS_AutoRebirth") end)
+end
+
+local rebirthOnlyRunning = false
+local function StartRebirthOnly()
+	if rebirthOnlyRunning then return end
+	rebirthOnlyRunning = true
+	task.spawn(function()
+		while Toggles["RebirthOnly"] and getgenv().__MS_Gen == myGen do
+			if not Remote then
+				EnsureRemote()
+				task.wait(1)
+			else
+				pcall(function()
+					if Rebirths and GetCoinsAmount() >= (10000000 * (Rebirths.Value + 1)) then
+						Remote:FireServer("Rebirth",{{}})
+					end
+				end)
+				task.wait(0.5)
+			end
+		end
+		rebirthOnlyRunning = false
+	end)
 end
 
 local gearToolText, gearPackText = "?", "?"
@@ -1115,6 +1138,16 @@ MiscTab:Toggle({
 	Callback = function(state)
 		Toggles["AutoRebirth"] = state
 		if state then StartAutoRebirth() else StopAutoRebirth() end
+	end
+})
+
+MiscTab:Toggle({
+	Title = "Rebirth Only",
+	Desc = "Only fires Rebirth when affordable, nothing else",
+	Value = false,
+	Callback = function(state)
+		Toggles["RebirthOnly"] = state
+		if state then StartRebirthOnly() end
 	end
 })
 

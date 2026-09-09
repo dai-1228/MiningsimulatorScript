@@ -61,6 +61,14 @@ pcall(function()
 	getgenv().__MS_WindUIWindow = nil
 	game:GetService("RunService"):UnbindFromRenderStep("MS_AutoRebirth")
 end)
+pcall(function()
+	local VU = game:GetService("VirtualUser")
+	LocalPlayer.Idled:Connect(function()
+		VU:CaptureController()
+		VU:ClickButton2(Vector2.new())
+	end)
+	print("[MS] Anti-AFK on")
+end)
 
 local Remote = nil
 local function EnsureRemote()
@@ -849,6 +857,35 @@ local function StartAutoTools()
 	end)
 end
 
+task.spawn(function()
+	local ok, col = pcall(function() return workspace:WaitForChild("Collapsed", 30) end)
+	if not ok or not col then return end
+	col.Changed:Connect(function()
+		local isCol = false
+		pcall(function() isCol = col.Value == true end)
+		if not isCol then return end
+		if areaTransit then return end
+		if not (Toggles["AutoMine"] or Toggles["FastMine"] or Toggles["AutoRebirth"]) then return end
+		areaPhaseText = "collapsed! recovering..."
+		print("[MS] Mine collapsed, recovering to area...")
+		task.wait(3)
+		local a = nil
+		for _, x in ipairs(Areas) do if x.name == lastAreaName then a = x break end end
+		a = a or DetectArea() or Areas[2]
+		lastAreaName = a.name
+		for _ = 1, 3 do
+			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if not h then break end
+			h.CFrame = CFrame.new(a.mine)
+			task.wait(0.5)
+			h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if h and (h.Position - a.mine).Magnitude <= 15 then break end
+		end
+		areaPhaseText = a.name .. ": recovered, mining..."
+		print("[MS] Recovered to " .. tostring(a.name))
+	end)
+end)
+
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 local Areas = {
@@ -867,6 +904,19 @@ local Areas = {
 local areaRunId = 0
 local areaPhaseText = "off"
 areaTransit = false
+local lastAreaName = nil
+local function DetectArea()
+	local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not h then return nil end
+	local best, bestd = nil, math.huge
+	for _, a in ipairs(Areas) do
+		local dx = h.Position.X - a.mine.X
+		local dz = h.Position.Z - a.mine.Z
+		local d = dx * dx + dz * dz
+		if d < bestd then bestd = d best = a end
+	end
+	return best
+end
 local function StopAreaRun()
 	areaRunId = areaRunId + 1
 	areaPhaseText = "off"
@@ -995,6 +1045,7 @@ local function StartAreaRun(area)
 		task.wait(0.5)
 		if not alive() then clearTransit() return end
 		areaPhaseText = area.name .. ": running autorebirth..."
+		lastAreaName = area.name
 		clearTransit()
 		Toggles["AutoRebirth"] = true
 		StartAutoRebirth()

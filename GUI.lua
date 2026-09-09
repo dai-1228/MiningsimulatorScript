@@ -115,7 +115,10 @@ local BUY_TRIP_TIME = 10
 local BUY_TRIP_MAX = 15
 local BUY_TRIP_COOLDOWN = 20
 local lastBuyTripEnd = 0
-local EnterBuyTrip, ExitBuyTrip = nil, nil
+local EnterBuyTrip, ExitBuyTrip, StopEverything = nil, nil, nil
+local rbGearCheckAt = 0
+local rbGearHold = false
+local rbGearHeld = false
 local function BuyTripActive()
 	if not buyTrip then return false end
 	if os.clock() - buyTripAt > BUY_TRIP_MAX then
@@ -324,6 +327,21 @@ local function StartAutoRebirth()
 	game:GetService("RunService"):BindToRenderStep("MS_AutoRebirth", Enum.RenderPriority.Camera.Value, function()
 		if not Toggles["AutoRebirth"] then return end
 		if BuyTripActive() then return end
+		if os.clock() - rbGearCheckAt > 1 then
+			rbGearCheckAt = os.clock()
+			rbGearHold = false
+			local gf = getgenv().__MS_GearAffordable
+			if gf then
+				local ok, hold = pcall(gf)
+				if ok and hold then rbGearHold = true end
+			end
+		end
+		if rbGearHold then
+			if not rbGearHeld then rbGearHeld = true print("[MS] Rebirth held: buying affordable gear first") end
+			return
+		else
+			rbGearHeld = false
+		end
 		if not Remote then EnsureRemote() end
 		if Rebirths and Remote then
 			while Toggles["AutoRebirth"] and GetCoinsAmount() >= (10000000 * (Rebirths.Value + 1)) do
@@ -848,7 +866,8 @@ local function StartAutoBackpack()
 				local bought = 0
 				local shop = discoverShop().packs
 				local pendInv = GetInventoryAmount()
-				if (Toggles["AutoSell"] or Toggles["AutoRebirth"]) and pendInv >= SellTreshold then
+				local sellPaused = areaTransit or (rebirthDigging and Toggles["AutoRebirth"])
+				if (Toggles["AutoSell"] or Toggles["AutoRebirth"]) and not sellPaused and pendInv >= SellTreshold then
 					lastBoughtPackText = "waiting for sell..."
 					task.wait(1)
 				elseif os.clock() - lastBuyTripEnd < BUY_TRIP_COOLDOWN then
@@ -958,7 +977,8 @@ local function StartAutoTools()
 				local bought = 0
 				local shop = discoverShop().tools
 				local pendInv = GetInventoryAmount()
-				if (Toggles["AutoSell"] or Toggles["AutoRebirth"]) and pendInv >= SellTreshold then
+				local sellPaused = areaTransit or (rebirthDigging and Toggles["AutoRebirth"])
+				if (Toggles["AutoSell"] or Toggles["AutoRebirth"]) and not sellPaused and pendInv >= SellTreshold then
 					lastBoughtToolText = "waiting for sell..."
 					task.wait(1)
 				elseif os.clock() - lastBuyTripEnd < BUY_TRIP_COOLDOWN then
@@ -1061,6 +1081,23 @@ local function StartAutoTools()
 	end)
 end
 
+getgenv().__MS_GearAffordable = function()
+	local ok, hold = pcall(function()
+		if not (Toggles["AutoTools"] or Toggles["AutoBackpack"]) then return false end
+		local coins = GetCoinsAmount()
+		if Toggles["AutoTools"] then
+			local ts = discoverShop().tools
+			if ts and bestBuy(ts, ownedToolIndex(ts), 1, coins, "Tools") then return true end
+		end
+		if Toggles["AutoBackpack"] then
+			local ps = discoverShop().packs
+			if ps and bestBuy(ps, ownedPackIndex(ps), 3, coins, "Backpack") then return true end
+		end
+		return false
+	end)
+	return ok and hold or false
+end
+
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
 local Areas = {
@@ -1090,6 +1127,25 @@ local function StopAreaRun()
 		if hum then hum.WalkSpeed, hum.JumpPower = 16, 50 end
 	end)
 end
+StopEverything = function()
+	for k in pairs(Toggles) do Toggles[k] = false end
+	sellLoopGen = sellLoopGen + 1
+	rebirthRunId = rebirthRunId + 1
+	StopAutoRebirth()
+	StopAreaRun()
+	if buyReturnPos then
+		pcall(function()
+			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if h then h.CFrame = CFrame.new(buyReturnPos) end
+		end)
+	end
+	buyTrip = false
+	buyTripReason = ""
+	buyReturnPos = nil
+	buyPause = false
+	print("[MS] STOPPED everything")
+end
+
 local function StartAreaRun(area)
 	areaRunId = areaRunId + 1
 	local run = areaRunId
@@ -1246,6 +1302,14 @@ MineTab:Toggle({
 	Value = false,
 	Callback = function(state)
 		Toggles["LimitDepth"] = state
+	end
+})
+
+MineTab:Button({
+	Title = "STOP EVERYTHING",
+	Desc = "Turns off all automation now",
+	Callback = function()
+		StopEverything()
 	end
 })
 
@@ -1427,7 +1491,7 @@ task.spawn(function()
 			local curInv, maxInv = GetInventoryAmount()
 			local curDepth = GetCurrentDepth()
 			local sellTxt = SELL_TRESHOLD == nil and "FULL" or tostring(SELL_TRESHOLD)
-			MineStatus:SetDesc(string.format("depth %s / target %s", tostring(curDepth), tostring(Depth)))
+			MineStatus:SetDesc(string.format("depth %s / target %s%s%s%s%s%s", tostring(curDepth), tostring(Depth), Toggles["AutoMine"] and " MINE" or "", Toggles["FastMine"] and " FAST" or "", Toggles["AutoRebirth"] and (" REBIRTH:" .. tostring(rebirthPhaseText)) or "", BuyTripActive() and (" BUY:" .. tostring(buyTripReason)) or "", areaTransit and " AREA" or ""))
 			if os.clock() >= sellEchoUntil then
 				SellStatus:SetDesc(string.format("inv %s/%s | threshold %s", tostring(curInv), tostring(maxInv), sellTxt))
 			end

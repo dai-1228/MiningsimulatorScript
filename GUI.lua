@@ -1220,21 +1220,6 @@ local AreaStatus = AreasTab:Paragraph({
 task.spawn(function()
 	while Window and getgenv().__MS_Gen == myGen do
 		pcall(function()
-			if lastMineSpot and not sellTrip and not areaTransit then
-				local c = LocalPlayer.Character
-				local h = c and c:FindFirstChild("HumanoidRootPart")
-				if h and (h.Position - lastMineSpot).Magnitude > 150 then
-					h.CFrame = CFrame.new(lastMineSpot)
-				end
-			end
-		end)
-		task.wait(1)
-	end
-end)
-
-task.spawn(function()
-	while Window and getgenv().__MS_Gen == myGen do
-		pcall(function()
 			local curInv, maxInv = GetInventoryAmount()
 			local curDepth = GetCurrentDepth()
 			local sellTxt = SELL_TRESHOLD == nil and "FULL" or tostring(SELL_TRESHOLD)

@@ -1,6 +1,7 @@
 local LocalPlayer = game.Players.LocalPlayer
 local SELL_TRESHOLD = getgenv().SellTreshold
-local SellTreshold = getgenv().SellTreshold or 30000
+if type(SELL_TRESHOLD) ~= "number" or not (SELL_TRESHOLD > 0) then SELL_TRESHOLD = nil end
+local SellTreshold = (type(getgenv().SellTreshold) == "number" and getgenv().SellTreshold > 0) and getgenv().SellTreshold or 30000
 local Depth = getgenv().Depth or 205
 getgenv().SellTreshold = SELL_TRESHOLD
 getgenv().Depth = Depth
@@ -100,6 +101,9 @@ local myGen = getgenv().__MS_Gen
 local buyPause, buyPauseAt = false, 0
 local lastMineSpot = nil
 local sellTrip = false
+local sellLoopGen = 0
+local sellHeartbeat = 0
+local sellDbgAt = 0
 local areaTransit = false
 local rebirthDigging = false
 local buyTrip = false
@@ -234,56 +238,79 @@ local function StartFastMine()
 end
 
 local function StartAutoSell()
+	sellLoopGen = sellLoopGen + 1
+	local gen = sellLoopGen
 	task.spawn(function()
-		while Toggles["AutoSell"] do
-			if not Remote then EnsureRemote() end
-			if BuyTripActive() then
-				task.wait(0.5)
-			elseif (rebirthDigging and Toggles["AutoRebirth"]) or areaTransit then
-				task.wait(0.5)
-			elseif Remote then
-				local Character = LocalPlayer.Character
-				local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
-				if HumanoidRootPart then
-					if sellTrip then task.wait(0.3)
-					else
-					do
-						if SELL_TRESHOLD ~= nil then SellTreshold = SELL_TRESHOLD
-						else local _, packMax = GetInventoryAmount() if packMax and packMax > 0 then SellTreshold = packMax end end
-					end
-					local SavedPosition = HumanoidRootPart.Position
-					local sold = false
-					sellTrip = true
-					while Toggles["AutoSell"] and not BuyTripActive() and GetInventoryAmount() >= SellTreshold and not recovering do
-						sold = true
-						Remote:FireServer("SellItems", {{}})
-						HumanoidRootPart.CFrame = SellArea
-						task.wait()
-						local freshChar = LocalPlayer.Character
-						local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
-						if freshHRP and freshHRP ~= HumanoidRootPart then break end
-					end
-					if sold and not BuyTripActive() then
-						local freshChar = LocalPlayer.Character
-						local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
-						if freshHRP then
-							for _ = 1, 3 do
-								freshHRP.CFrame = CFrame.new(SavedPosition)
-								task.wait(0.3)
-								freshChar = LocalPlayer.Character
-								freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
-								if freshHRP and (freshHRP.Position - SavedPosition).Magnitude <= 15 then break end
+		print("[MS] AutoSell on (threshold " .. tostring(SellTreshold) .. ")")
+		while Toggles["AutoSell"] and gen == sellLoopGen do
+			sellHeartbeat = os.clock()
+			local ok, err = pcall(function()
+				if not Remote then EnsureRemote() end
+				if BuyTripActive() then
+					task.wait(0.5)
+				elseif (rebirthDigging and Toggles["AutoRebirth"]) or areaTransit then
+					task.wait(0.5)
+				elseif Remote then
+					local Character = LocalPlayer.Character
+					local HumanoidRootPart = Character and Character:FindFirstChild("HumanoidRootPart")
+					if HumanoidRootPart then
+						if sellTrip then task.wait(0.3)
+						else
+						do
+							if SELL_TRESHOLD ~= nil then SellTreshold = SELL_TRESHOLD
+							else local _, packMax = GetInventoryAmount() if packMax and packMax > 0 then SellTreshold = packMax end end
+						end
+						local curInv, curMax = GetInventoryAmount()
+						if curInv >= SellTreshold then
+							local SavedPosition = HumanoidRootPart.Position
+							local sold = false
+							sellTrip = true
+							print("[MS] Selling: inv " .. tostring(curInv) .. "/" .. tostring(curMax) .. " threshold " .. tostring(SellTreshold))
+							while Toggles["AutoSell"] and gen == sellLoopGen and not BuyTripActive() and GetInventoryAmount() >= SellTreshold and not recovering do
+								sold = true
+								Remote:FireServer("SellItems", {{}})
+								HumanoidRootPart.CFrame = SellArea
+								task.wait()
+								local freshChar = LocalPlayer.Character
+								local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+								if freshHRP and freshHRP ~= HumanoidRootPart then break end
 							end
+							if sold and not BuyTripActive() then
+								local freshChar = LocalPlayer.Character
+								local freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+								if freshHRP then
+									for _ = 1, 3 do
+										freshHRP.CFrame = CFrame.new(SavedPosition)
+										task.wait(0.3)
+										freshChar = LocalPlayer.Character
+										freshHRP = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+										if freshHRP and (freshHRP.Position - SavedPosition).Magnitude <= 15 then break end
+									end
+								end
+							end
+							sellTrip = false
+							print("[MS] Sell trip done: inv now " .. tostring(select(1, GetInventoryAmount())) .. " coins " .. tostring(GetCoinsAmount()))
+						else
+							if os.clock() - sellDbgAt > 15 then
+								sellDbgAt = os.clock()
+								print("[MS] AutoSell waiting: inv " .. tostring(curInv) .. "/" .. tostring(curMax) .. " threshold " .. tostring(SellTreshold) .. " remote " .. tostring(Remote ~= nil))
+							end
+							task.wait(0.5)
+						end
 						end
 					end
-					sellTrip = false
-					end
+				else
+					task.wait(1)
 				end
-			else
+			end)
+			if not ok then
+				print("[MS] AutoSell error (loop kept alive): " .. tostring(err))
+				pcall(function() sellTrip = false end)
 				task.wait(1)
 			end
 			task.wait()
 		end
+		print("[MS] AutoSell off")
 	end)
 end
 

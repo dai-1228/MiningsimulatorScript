@@ -434,11 +434,12 @@ local function StartRebirthOnly()
 				task.wait(1)
 			else
 				pcall(function()
-					if Rebirths and GetCoinsAmount() >= (10000000 * (Rebirths.Value + 1)) then
+					while Rebirths and Toggles["RebirthOnly"] and GetCoinsAmount() >= (10000000 * (Rebirths.Value + 1)) do
 						Remote:FireServer("Rebirth",{{}})
+						task.wait()
 					end
 				end)
-				task.wait(0.5)
+				task.wait(0.1)
 			end
 		end
 		rebirthOnlyRunning = false

@@ -1,11 +1,59 @@
 local LocalPlayer = game.Players.LocalPlayer
 local SELL_TRESHOLD = getgenv().SellTreshold
-local SellTreshold = getgenv().SellTreshold or 30000
+if type(SELL_TRESHOLD) ~= "number" or not (SELL_TRESHOLD > 0) then SELL_TRESHOLD = nil end
+local SellTreshold = (type(getgenv().SellTreshold) == "number" and getgenv().SellTreshold > 0) and getgenv().SellTreshold or 30000
 local Depth = getgenv().Depth or 205
 getgenv().SellTreshold = SELL_TRESHOLD
 getgenv().Depth = Depth
 local SellArea = CFrame.new(42, 14, -1239)
 local recovering = false
+local areaTransit = false
+local rebirthDigging = false
+local collapseRecovering = false
+local areaRunId = 0
+local areaPhaseText = "off"
+local lastAreaName = nil
+local lastAreaTrackAt = 0
+local Areas = {
+	{ name = "Cyber",   moveTo = "CyberSpawn",  spawn = Vector3.new(21, 15, 30139),   walkEnd = Vector3.new(19, 13, 30051),   mine = Vector3.new(22, 12, 30037),   bridgeSize = Vector3.new(10, 1, 100), bridgePos = Vector3.new(21, 9.5, 30095) },
+	{ name = "Spawn",   moveTo = nil,           spawn = Vector3.new(-86, 14, -12),    walkEnd = Vector3.new(-36, 14, -3),     mine = Vector3.new(-17, 12, -3) },
+	{ name = "Space",   moveTo = "SpaceSpawn",  spawn = Vector3.new(-81, 15, 1569),   walkEnd = Vector3.new(-27, 12, 1568),   mine = Vector3.new(-15, 12, 1568) },
+	{ name = "Candy",   moveTo = "CandySpawn",  spawn = Vector3.new(-27, 15, 3011),   walkEnd = Vector3.new(2, 13, 3009),     mine = Vector3.new(11, 12, 3010) },
+	{ name = "Toy",     moveTo = "ToySpawn",    spawn = Vector3.new(10, 15, 5719),    walkEnd = Vector3.new(11, 13, 5699),    mine = Vector3.new(11, 12, 5687) },
+	{ name = "Food",    moveTo = "FoodSpawn",   spawn = Vector3.new(61, 14, 8675),    walkEnd = Vector3.new(59, 13, 8719),    mine = Vector3.new(56, 12, 8732) },
+	{ name = "Dino",    moveTo = "DinoSpawn",   spawn = Vector3.new(12, 15, 10581),   walkEnd = Vector3.new(12, 13, 10552),   mine = Vector3.new(14, 12, 10539) },
+	{ name = "Sea",     moveTo = "SeaSpawn",    spawn = Vector3.new(14, 12, 10539),   walkEnd = Vector3.new(17, 13, 11969),   mine = Vector3.new(18, 12, 11949) },
+	{ name = "Beach",   moveTo = "BeachSpawn",  spawn = Vector3.new(19, 14, 14437),   walkEnd = Vector3.new(15, 13, 14374),   mine = Vector3.new(15, 12, 14357) },
+	{ name = "Cavern",  moveTo = "CavernSpawn", spawn = Vector3.new(19, 15, 18461),   walkEnd = Vector3.new(20, 13, 18400),   mine = Vector3.new(21, 12, 18382) },
+	{ name = "MagicForest", moveTo = nil,       spawn = Vector3.new(15, 15, 22461),   walkEnd = Vector3.new(16, 13, 22420),   mine = Vector3.new(17, 12, 22409) },
+}
+local function DetectArea()
+	local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not h then return nil end
+	local best, bestd = nil, math.huge
+	for _, a in ipairs(Areas) do
+		local dx = h.Position.X - a.mine.X
+		local dz = h.Position.Z - a.mine.Z
+		local d = dx * dx + dz * dz
+		if d < bestd then bestd = d best = a end
+	end
+	return best
+end
+local function FindAreaByName(name)
+	if type(name) ~= "string" then return nil end
+	for _, a in ipairs(Areas) do if a.name == name then return a end end
+	return nil
+end
+local function TrackArea(force)
+	if collapseRecovering or areaTransit then return end
+	local now = os.clock()
+	if not force and now - lastAreaTrackAt < 5 then return end
+	lastAreaTrackAt = now
+	pcall(function()
+		local a = DetectArea()
+		if a then lastAreaName = a.name end
+	end)
+end
 
 local function Split(s, delimiter)
 	local result = {};
@@ -58,6 +106,8 @@ pcall(function()
 	end
 	if getgenv().__MS_WindUIWindow then getgenv().__MS_WindUIWindow:Destroy() end
 	getgenv().__MS_WindUIWindow = nil
+	getgenv().__MS_BackpackRunning = false
+	getgenv().__MS_ToolsRunning = false
 	game:GetService("RunService"):UnbindFromRenderStep("MS_AutoRebirth")
 end)
 
@@ -67,7 +117,14 @@ local function EnsureRemote()
 	pcall(function()
 		local Network = game:GetService("ReplicatedStorage"):WaitForChild("Network", 5)
 		if Network then
-			Remote = Network:InvokeServer()
+			local a, b = Network:InvokeServer()
+			if typeof(a) == "Instance" and a:IsA("RemoteEvent") then
+				Remote = a
+			elseif typeof(b) == "Instance" and b:IsA("RemoteEvent") then
+				Remote = b
+			else
+				Remote = a
+			end
 		end
 	end)
 	if not Remote then
@@ -83,6 +140,14 @@ local function EnsureRemote()
 	return Remote
 end
 EnsureRemote()
+pcall(function()
+	local VU = game:GetService("VirtualUser")
+	LocalPlayer.Idled:Connect(function()
+		VU:CaptureController()
+		VU:ClickButton2(Vector2.new())
+	end)
+	print("[MS] Anti-AFK on")
+end)
 
 local Toggles = getgenv().__MS_Toggles or {
 	AutoSell = false,
@@ -91,6 +156,7 @@ local Toggles = getgenv().__MS_Toggles or {
 	AutoBackpack = false,
 	AutoTools = false,
 	AutoRebirth = false,
+	RebirthOnly = false,
 	LimitDepth = false
 }
 for k in pairs(Toggles) do Toggles[k] = false end
@@ -100,6 +166,8 @@ local myGen = getgenv().__MS_Gen
 local buyPause, buyPauseAt = false, 0
 local lastMineSpot = nil
 local sellTrip = false
+local sellLoopGen = 0
+local sellDbgAt = 0
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 local GameGui = PlayerGui:WaitForChild("ScreenGui", 10)
@@ -144,7 +212,7 @@ end
 local function StartAutoMine()
 	task.spawn(function()
 		while Toggles["AutoMine"] do
-			if areaTransit then task.wait(0.3)
+			if areaTransit or recovering or collapseRecovering then task.wait(0.3)
 			elseif buyPause then
 				if os.clock() - buyPauseAt > 8 then buyPause = false else task.wait(0.3) end
 			else
@@ -161,10 +229,11 @@ local function StartAutoMine()
 						local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 10)
 						for _, block in pairs(parts) do
 							if not Toggles["AutoMine"] then break end
+							if areaTransit or recovering or collapseRecovering then break end
 							Remote:FireServer("MineBlock",{{block.Parent}})
 							task.wait()
 						end
-						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position TrackArea() end
 					else
 						task.wait(0.5)
 					end
@@ -181,7 +250,7 @@ end
 local function StartFastMine()
 	task.spawn(function()
 		while Toggles["FastMine"] do
-			if areaTransit then task.wait(0.3)
+			if areaTransit or recovering or collapseRecovering then task.wait(0.3)
 			elseif buyPause then
 				if os.clock() - buyPauseAt > 8 then buyPause = false else task.wait(0.3) end
 			else
@@ -196,10 +265,11 @@ local function StartFastMine()
 					local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 50)
 						for _, block in ipairs(parts) do
 							if not Toggles["FastMine"] then break end
+							if areaTransit or recovering or collapseRecovering then break end
 							Remote:FireServer("MineBlock", {{block.Parent}})
 							task.wait()
 						end
-						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position TrackArea() end
 					end
 			else
 				task.wait(1)
@@ -211,10 +281,14 @@ local function StartFastMine()
 end
 
 local function StartAutoSell()
+	sellLoopGen = sellLoopGen + 1
+	local gen = sellLoopGen
 	task.spawn(function()
-		while Toggles["AutoSell"] do
+		print("[MS] AutoSell on (threshold " .. tostring(SellTreshold) .. ")")
+		while Toggles["AutoSell"] and gen == sellLoopGen do
+			local ok, err = pcall(function()
 			if not Remote then EnsureRemote() end
-			if (rebirthDigging and Toggles["AutoRebirth"]) or areaTransit then
+			if (rebirthDigging and Toggles["AutoRebirth"]) or areaTransit or recovering or collapseRecovering then
 				task.wait(0.5)
 			elseif Remote then
 				local Character = LocalPlayer.Character
@@ -226,10 +300,13 @@ local function StartAutoSell()
 						if SELL_TRESHOLD ~= nil then SellTreshold = SELL_TRESHOLD
 						else local _, packMax = GetInventoryAmount() if packMax and packMax > 0 then SellTreshold = packMax end end
 					end
+					local curInv, curMax = GetInventoryAmount()
+					if curInv >= SellTreshold then
 					local SavedPosition = HumanoidRootPart.Position
 					local sold = false
 					sellTrip = true
-					while Toggles["AutoSell"] and GetInventoryAmount() >= SellTreshold and not recovering do
+					print("[MS] Selling: inv " .. tostring(curInv) .. "/" .. tostring(curMax) .. " threshold " .. tostring(SellTreshold))
+					while Toggles["AutoSell"] and gen == sellLoopGen and GetInventoryAmount() >= SellTreshold and not recovering and not collapseRecovering do
 						sold = true
 						Remote:FireServer("SellItems", {{}})
 						HumanoidRootPart.CFrame = SellArea
@@ -252,19 +329,34 @@ local function StartAutoSell()
 						end
 					end
 					sellTrip = false
+					print("[MS] Sell trip done: inv now " .. tostring(select(1, GetInventoryAmount())) .. " coins " .. tostring(GetCoinsAmount()))
+					else
+						if os.clock() - sellDbgAt > 15 then
+							sellDbgAt = os.clock()
+							print("[MS] AutoSell waiting: inv " .. tostring(curInv) .. "/" .. tostring(curMax) .. " threshold " .. tostring(SellTreshold) .. " remote " .. tostring(Remote ~= nil))
+						end
+						task.wait(0.5)
+					end
 					end
 				end
 			else
 				task.wait(1)
 			end
+			end)
+			if not ok then
+				print("[MS] AutoSell error (loop kept alive): " .. tostring(err))
+				pcall(function() sellTrip = false end)
+				task.wait(1)
+			end
 			task.wait()
 		end
+		print("[MS] AutoSell off")
 	end)
 end
 
 local rebirthRunId = 0
 local rebirthPhaseText = "off"
-local rebirthDigging = false
+rebirthDigging = false
 local function StartAutoRebirth()
 	pcall(function() game:GetService("RunService"):UnbindFromRenderStep("MS_AutoRebirth") end)
 	game:GetService("RunService"):BindToRenderStep("MS_AutoRebirth", Enum.RenderPriority.Camera.Value, function()
@@ -296,6 +388,7 @@ local function StartAutoRebirth()
 		local nilStreak = 0
 		while Toggles["AutoRebirth"] and run == rebirthRunId do
 			if buyPause then task.wait(0.3)
+			elseif areaTransit or recovering or collapseRecovering then task.wait(0.3)
 			else
 				if not Remote then EnsureRemote() end
 				if not Remote then task.wait(1)
@@ -316,6 +409,7 @@ local function StartAutoRebirth()
 						local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 10)
 						for _, block in pairs(parts) do
 							if not Toggles["AutoRebirth"] or run ~= rebirthRunId then break end
+							if areaTransit or recovering or collapseRecovering then break end
 							Remote:FireServer("MineBlock",{{block.Parent}})
 							task.wait()
 						end
@@ -328,6 +422,7 @@ local function StartAutoRebirth()
 		rebirthPhaseText = "mining + selling..."
 		while Toggles["AutoRebirth"] and run == rebirthRunId do
 			if buyPause then task.wait(0.3)
+			elseif areaTransit or recovering or collapseRecovering then task.wait(0.3)
 			else
 				if not Remote then EnsureRemote() end
 				if not Remote then task.wait(1)
@@ -341,10 +436,11 @@ local function StartAutoRebirth()
 						local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 50)
 						for _, block in ipairs(parts) do
 							if not Toggles["AutoRebirth"] or run ~= rebirthRunId then break end
+							if areaTransit or recovering or collapseRecovering then break end
 							Remote:FireServer("MineBlock", {{block.Parent}})
 							task.wait()
 						end
-						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position TrackArea() end
 						if sellTrip then task.wait(0.3)
 						else
 						do
@@ -354,7 +450,7 @@ local function StartAutoRebirth()
 						local SavedPosition = HumanoidRootPart.Position
 						local sold = false
 						sellTrip = true
-						while Toggles["AutoRebirth"] and run == rebirthRunId and GetInventoryAmount() >= SellTreshold and not recovering do
+						while Toggles["AutoRebirth"] and run == rebirthRunId and GetInventoryAmount() >= SellTreshold and not recovering and not collapseRecovering do
 							sold = true
 							Remote:FireServer("SellItems", {{}})
 							HumanoidRootPart.CFrame = SellArea
@@ -392,6 +488,29 @@ local function StopAutoRebirth()
 	rebirthPhaseText = "off"
 	rebirthDigging = false
 	pcall(function() game:GetService("RunService"):UnbindFromRenderStep("MS_AutoRebirth") end)
+end
+
+local rebirthOnlyRunning = false
+local function StartRebirthOnly()
+	if rebirthOnlyRunning then return end
+	rebirthOnlyRunning = true
+	task.spawn(function()
+		while Toggles["RebirthOnly"] and getgenv().__MS_Gen == myGen do
+			if not Remote then
+				EnsureRemote()
+				task.wait(1)
+			else
+				pcall(function()
+					while Rebirths and Toggles["RebirthOnly"] and GetCoinsAmount() >= (10000000 * (Rebirths.Value + 1)) do
+						Remote:FireServer("Rebirth",{{}})
+						task.wait()
+					end
+				end)
+				task.wait(0.1)
+			end
+		end
+		rebirthOnlyRunning = false
+	end)
 end
 
 local gearToolText, gearPackText = "?", "?"
@@ -552,6 +671,7 @@ local function discoverShop()
 	return ShopCache
 end
 
+local bestToolName
 local function ownedToolIndex(shop)
 	local ok, idx = pcall(function()
 		local pd = playerDataTable()
@@ -634,7 +754,7 @@ local function packSignature()
 	return ""
 end
 
-local function bestToolName()
+function bestToolName()
 	local ok, name = pcall(function()
 		local ch = LocalPlayer.Character
 		if ch then for _, t in pairs(ch:GetChildren()) do if t:IsA("Tool") then return t.Name end end end
@@ -718,8 +838,12 @@ local function StartAutoBackpack()
 	local mem = 3
 	local fails = 0
 	local timeoutIdx, timeoutStreak = nil, 0
+	if getgenv().__MS_BackpackRunning then return end
+	getgenv().__MS_BackpackRunning = true
 	task.spawn(function()
-		while Toggles["AutoBackpack"] do
+		while Toggles["AutoBackpack"] and getgenv().__MS_Gen == myGen do
+			if areaTransit or recovering or collapseRecovering then task.wait(0.5)
+			else
 			if not Remote then EnsureRemote() end
 			if not Remote then task.wait(1)
 			else
@@ -786,7 +910,9 @@ local function StartAutoBackpack()
 				if bought == 0 and fails >= 3 and lastBoughtPackText == "none yet" then lastBoughtPackText = "MAX / nothing to buy" end
 				task.wait(bought > 0 and 0.1 or math.min(2 + fails * 2, 12))
 			end
+			end
 		end
+		getgenv().__MS_BackpackRunning = false
 	end)
 end
 
@@ -794,8 +920,12 @@ local function StartAutoTools()
 	local mem = 1
 	local fails = 0
 	local timeoutIdx, timeoutStreak = nil, 0
+	if getgenv().__MS_ToolsRunning then return end
+	getgenv().__MS_ToolsRunning = true
 	task.spawn(function()
-		while Toggles["AutoTools"] do
+		while Toggles["AutoTools"] and getgenv().__MS_Gen == myGen do
+			if areaTransit or recovering or collapseRecovering then task.wait(0.5)
+			else
 			if not Remote then EnsureRemote() end
 			if not Remote then task.wait(1)
 			else
@@ -873,28 +1003,14 @@ local function StartAutoTools()
 				if bought == 0 and fails >= 3 and lastBoughtToolText == "none yet" then lastBoughtToolText = "MAX / nothing to buy" end
 				task.wait(bought > 0 and 0.1 or math.min(2 + fails * 2, 12))
 			end
+			end
 		end
+		getgenv().__MS_ToolsRunning = false
 	end)
 end
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
-local Areas = {
-	{ name = "Cyber",   moveTo = "CyberSpawn",  spawn = Vector3.new(21, 15, 30139),   walkEnd = Vector3.new(19, 13, 30051),   mine = Vector3.new(22, 12, 30037),   bridgeSize = Vector3.new(10, 1, 100), bridgePos = Vector3.new(21, 9.5, 30095) },
-	{ name = "Spawn",   moveTo = nil,           spawn = Vector3.new(-86, 14, -12),    walkEnd = Vector3.new(-36, 14, -3),     mine = Vector3.new(-17, 12, -3) },
-	{ name = "Space",   moveTo = "SpaceSpawn",  spawn = Vector3.new(-81, 15, 1569),   walkEnd = Vector3.new(-27, 12, 1568),   mine = Vector3.new(-15, 12, 1568) },
-	{ name = "Candy",   moveTo = "CandySpawn",  spawn = Vector3.new(-27, 15, 3011),   walkEnd = Vector3.new(2, 13, 3009),     mine = Vector3.new(11, 12, 3010) },
-	{ name = "Toy",     moveTo = "ToySpawn",    spawn = Vector3.new(10, 15, 5719),    walkEnd = Vector3.new(11, 13, 5699),    mine = Vector3.new(11, 12, 5687) },
-	{ name = "Food",    moveTo = "FoodSpawn",   spawn = Vector3.new(61, 14, 8675),    walkEnd = Vector3.new(59, 13, 8719),    mine = Vector3.new(56, 12, 8732) },
-	{ name = "Dino",    moveTo = "DinoSpawn",   spawn = Vector3.new(12, 15, 10581),   walkEnd = Vector3.new(12, 13, 10552),   mine = Vector3.new(14, 12, 10539) },
-	{ name = "Sea",     moveTo = "SeaSpawn",    spawn = Vector3.new(14, 12, 10539),   walkEnd = Vector3.new(17, 13, 11969),   mine = Vector3.new(18, 12, 11949) },
-	{ name = "Beach",   moveTo = "BeachSpawn",  spawn = Vector3.new(19, 14, 14437),   walkEnd = Vector3.new(15, 13, 14374),   mine = Vector3.new(15, 12, 14357) },
-	{ name = "Cavern",  moveTo = "CavernSpawn", spawn = Vector3.new(19, 15, 18461),   walkEnd = Vector3.new(20, 13, 18400),   mine = Vector3.new(21, 12, 18382) },
-	{ name = "MagicForest", moveTo = nil,       spawn = Vector3.new(15, 15, 22461),   walkEnd = Vector3.new(16, 13, 22420),   mine = Vector3.new(17, 12, 22409) },
-}
-local areaRunId = 0
-local areaPhaseText = "off"
-local areaTransit = false
 local function StopAreaRun()
 	areaRunId = areaRunId + 1
 	areaPhaseText = "off"
@@ -1014,11 +1130,153 @@ local function StartAreaRun(area)
 		task.wait(0.5)
 		if not alive() then clearTransit() return end
 		areaPhaseText = area.name .. ": running autorebirth..."
+		lastAreaName = area.name
+		TrackArea(true)
 		clearTransit()
 		Toggles["AutoRebirth"] = true
 		StartAutoRebirth()
 	end)
 end
+
+local collapseGen = 0
+local function BlocksNear(pos, radius, maxParts)
+	local ok, parts = pcall(function()
+		local region = Region3.new(pos - Vector3.new(radius, radius, radius), pos + Vector3.new(radius, radius, radius))
+		return workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, maxParts or 10)
+	end)
+	if ok and type(parts) == "table" then return #parts end
+	return -1
+end
+local function RecoverFromCollapse(reason)
+	collapseGen = collapseGen + 1
+	local gen = collapseGen
+	if collapseRecovering then return end
+	if not (Toggles["AutoMine"] or Toggles["FastMine"] or Toggles["AutoRebirth"] or Toggles["AutoSell"]) then return end
+	collapseRecovering = true
+	recovering = true
+	areaTransit = true
+	local resumeArea = FindAreaByName(lastAreaName) or DetectArea()
+	if not resumeArea and lastMineSpot then
+		local best, bestd = nil, math.huge
+		for _, a in ipairs(Areas) do
+			local dx = lastMineSpot.X - a.mine.X
+			local dz = lastMineSpot.Z - a.mine.Z
+			local d = dx * dx + dz * dz
+			if d < bestd then bestd = d best = a end
+		end
+		resumeArea = best
+	end
+	resumeArea = resumeArea or Areas[2]
+	lastAreaName = resumeArea.name
+	local resumePos = resumeArea.mine
+	if lastMineSpot and (lastMineSpot - resumeArea.mine).Magnitude < 150 then
+		resumePos = lastMineSpot
+	end
+	areaPhaseText = resumeArea.name .. ": collapsed (" .. tostring(reason) .. "), recovering..."
+	print("[MS] Collapse detected (" .. tostring(reason) .. "). Was in " .. resumeArea.name .. ", pausing loops...")
+	task.spawn(function()
+		for _ = 1, 30 do
+			if gen ~= collapseGen then return end
+			task.wait(0.5)
+			local done = false
+			pcall(function()
+				local col = workspace:FindFirstChild("Collapsed")
+				if not col or col.Value ~= true then done = true end
+			end)
+			if done then break end
+			if _ >= 6 then break end
+		end
+		if gen ~= collapseGen then return end
+		for _ = 1, 20 do
+			if gen ~= collapseGen then return end
+			if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then break end
+			task.wait(0.5)
+		end
+		local teleported = false
+		for _ = 1, 4 do
+			if gen ~= collapseGen then return end
+			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if not h then task.wait(0.5)
+			else
+				pcall(function() h.Anchored = false end)
+				h.CFrame = CFrame.new(resumePos)
+				task.wait(0.6)
+				h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+				if h and (h.Position - resumePos).Magnitude <= 20 then teleported = true break end
+			end
+		end
+		local verified = false
+		for _ = 1, 10 do
+			if gen ~= collapseGen then return end
+			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if h then
+				local n = BlocksNear(h.Position, 8, 10)
+				if n > 0 then verified = true break end
+				local n2 = BlocksNear(resumePos, 12, 10)
+				if n2 > 0 then
+					pcall(function() h.CFrame = CFrame.new(resumePos) end)
+					task.wait(0.5)
+				end
+			end
+			task.wait(0.5)
+		end
+		if gen ~= collapseGen then return end
+		if not teleported or not verified then
+			areaPhaseText = resumeArea.name .. ": simple teleport failed, full re-run..."
+			print("[MS] Simple teleport failed (teleported=" .. tostring(teleported) .. " blocks=" .. tostring(verified) .. "), full StartAreaRun(" .. resumeArea.name .. ")")
+			collapseRecovering = false
+			recovering = false
+			areaTransit = false
+			StartAreaRun(resumeArea)
+			return
+		end
+		lastMineSpot = resumePos
+		TrackArea(true)
+		areaPhaseText = resumeArea.name .. ": recovered, resuming..."
+		print("[MS] Recovered to " .. resumeArea.name .. ", resuming previous toggles.")
+		collapseRecovering = false
+		recovering = false
+		areaTransit = false
+	end)
+end
+task.spawn(function()
+	local col = nil
+	pcall(function() col = workspace:WaitForChild("Collapsed", 30) end)
+	if col then
+		col.Changed:Connect(function()
+			local isCol = false
+			pcall(function() isCol = col.Value == true end)
+			if isCol then RecoverFromCollapse("Collapsed=true") end
+		end)
+	else
+		print("[MS] WARNING: workspace.Collapsed not found, using block-watchdog only")
+	end
+	local emptyStreak = 0
+	while true do
+		task.wait(2)
+		pcall(function()
+			local mining = Toggles["AutoMine"] or Toggles["FastMine"] or Toggles["AutoRebirth"]
+			if not mining or collapseRecovering or areaTransit or sellTrip then emptyStreak = 0 return end
+			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if not h then emptyStreak = 0 return end
+			local n = BlocksNear(h.Position, 8, 10)
+			if n == 0 then
+				emptyStreak = emptyStreak + 1
+				local colNow = false
+				pcall(function()
+					local c = workspace:FindFirstChild("Collapsed")
+					colNow = c and c.Value == true
+				end)
+				if emptyStreak >= 4 and (colNow or BlocksNear(h.Position, 20, 20) == 0) then
+					emptyStreak = 0
+					RecoverFromCollapse("no-blocks-watchdog")
+				end
+			else
+				emptyStreak = 0
+			end
+		end)
+	end
+end)
 
 local Window = WindUI:CreateWindow({
 	Title = "Mining Simulator",
@@ -1150,6 +1408,16 @@ MiscTab:Toggle({
 	Callback = function(state)
 		Toggles["AutoRebirth"] = state
 		if state then StartAutoRebirth() else StopAutoRebirth() end
+	end
+})
+
+MiscTab:Toggle({
+	Title = "Rebirth Only",
+	Desc = "Only fires Rebirth when affordable, nothing else",
+	Value = false,
+	Callback = function(state)
+		Toggles["RebirthOnly"] = state
+		if state then StartRebirthOnly() end
 	end
 })
 

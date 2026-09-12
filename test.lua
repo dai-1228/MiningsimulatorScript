@@ -115,6 +115,55 @@ local sellHeartbeat = 0
 local sellDbgAt = 0
 local areaTransit = false
 local rebirthDigging = false
+-- Collapse recovery state (defined early so ALL mining loops + watcher share it).
+-- Yes, collapse IS detectable: workspace.Collapsed (BoolValue) flips true, see ClientScript updateCollapsed().
+local areaRunId = 0
+local areaPhaseText = "off"
+local lastAreaName = nil
+local collapseRecovering = false
+local lastAreaTrackAt = 0
+local Areas = {
+	{ name = "Cyber",   moveTo = "CyberSpawn",  spawn = Vector3.new(21, 15, 30139),   walkEnd = Vector3.new(19, 13, 30051),   mine = Vector3.new(22, 12, 30037),   bridgeSize = Vector3.new(10, 1, 100), bridgePos = Vector3.new(21, 9.5, 30095) },
+	{ name = "Spawn",   moveTo = nil,           spawn = Vector3.new(-86, 14, -12),    walkEnd = Vector3.new(-36, 14, -3),     mine = Vector3.new(-17, 12, -3) },
+	{ name = "Space",   moveTo = "SpaceSpawn",  spawn = Vector3.new(-81, 15, 1569),   walkEnd = Vector3.new(-27, 12, 1568),   mine = Vector3.new(-15, 12, 1568) },
+	{ name = "Candy",   moveTo = "CandySpawn",  spawn = Vector3.new(-27, 15, 3011),   walkEnd = Vector3.new(2, 13, 3009),     mine = Vector3.new(11, 12, 3010) },
+	{ name = "Toy",     moveTo = "ToySpawn",    spawn = Vector3.new(10, 15, 5719),    walkEnd = Vector3.new(11, 13, 5699),    mine = Vector3.new(11, 12, 5687) },
+	{ name = "Food",    moveTo = "FoodSpawn",   spawn = Vector3.new(61, 14, 8675),    walkEnd = Vector3.new(59, 13, 8719),    mine = Vector3.new(56, 12, 8732) },
+	{ name = "Dino",    moveTo = "DinoSpawn",   spawn = Vector3.new(12, 15, 10581),   walkEnd = Vector3.new(12, 13, 10552),   mine = Vector3.new(14, 12, 10539) },
+	{ name = "Sea",     moveTo = "SeaSpawn",    spawn = Vector3.new(14, 12, 10539),   walkEnd = Vector3.new(17, 13, 11969),   mine = Vector3.new(18, 12, 11949) },
+	{ name = "Beach",   moveTo = "BeachSpawn",  spawn = Vector3.new(19, 14, 14437),   walkEnd = Vector3.new(15, 13, 14374),   mine = Vector3.new(15, 12, 14357) },
+	{ name = "Cavern",  moveTo = "CavernSpawn", spawn = Vector3.new(19, 15, 18461),   walkEnd = Vector3.new(20, 13, 18400),   mine = Vector3.new(21, 12, 18382) },
+	{ name = "MagicForest", moveTo = nil,       spawn = Vector3.new(15, 15, 22461),   walkEnd = Vector3.new(16, 13, 22420),   mine = Vector3.new(17, 12, 22409) },
+}
+local function DetectArea()
+	local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not h then return nil end
+	local best, bestd = nil, math.huge
+	for _, a in ipairs(Areas) do
+		local dx = h.Position.X - a.mine.X
+		local dz = h.Position.Z - a.mine.Z
+		local d = dx * dx + dz * dz
+		if d < bestd then bestd = d best = a end
+	end
+	return best
+end
+local function FindAreaByName(name)
+	if type(name) ~= "string" then return nil end
+	for _, a in ipairs(Areas) do if a.name == name then return a end end
+	return nil
+end
+-- Called from mining loops whenever we successfully see blocks: keeps lastAreaName fresh
+-- even if the user walked there manually (never pressed Run <area>).
+local function TrackArea(force)
+	if collapseRecovering or areaTransit then return end
+	local now = os.clock()
+	if not force and now - lastAreaTrackAt < 5 then return end
+	lastAreaTrackAt = now
+	pcall(function()
+		local a = DetectArea()
+		if a then lastAreaName = a.name end
+	end)
+end
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 local GameGui = PlayerGui:WaitForChild("ScreenGui", 10)
 local StatsFrame2 = GameGui and GameGui:WaitForChild("StatsFrame2", 10)
@@ -158,7 +207,7 @@ end
 local function StartAutoMine()
 	task.spawn(function()
 		while Toggles["AutoMine"] do
-			if areaTransit then task.wait(0.3)
+			if areaTransit or recovering or collapseRecovering then task.wait(0.3)
 			elseif buyPause then
 				if os.clock() - buyPauseAt > 8 then buyPause = false else task.wait(0.3) end
 			else
@@ -175,10 +224,11 @@ local function StartAutoMine()
 						local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 10)
 						for _, block in pairs(parts) do
 							if not Toggles["AutoMine"] then break end
+							if areaTransit or recovering or collapseRecovering then break end
 							Remote:FireServer("MineBlock",{{block.Parent}})
 							task.wait()
 						end
-						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position TrackArea() end
 					else
 						task.wait(0.5)
 					end
@@ -195,7 +245,7 @@ end
 local function StartFastMine()
 	task.spawn(function()
 		while Toggles["FastMine"] do
-			if areaTransit then task.wait(0.3)
+			if areaTransit or recovering or collapseRecovering then task.wait(0.3)
 			elseif buyPause then
 				if os.clock() - buyPauseAt > 8 then buyPause = false else task.wait(0.3) end
 			else
@@ -210,10 +260,11 @@ local function StartFastMine()
 					local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 50)
 						for _, block in ipairs(parts) do
 							if not Toggles["FastMine"] then break end
+							if areaTransit or recovering or collapseRecovering then break end
 							Remote:FireServer("MineBlock", {{block.Parent}})
 							task.wait()
 						end
-						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position TrackArea() end
 					end
 			else
 				task.wait(1)
@@ -233,7 +284,7 @@ local function StartAutoSell()
 			sellHeartbeat = os.clock()
 			local ok, err = pcall(function()
 			if not Remote then EnsureRemote() end
-			if areaTransit then
+			if areaTransit or recovering or collapseRecovering then
 				task.wait(0.5)
 			elseif Remote then
 					local Character = LocalPlayer.Character
@@ -251,7 +302,7 @@ local function StartAutoSell()
 							local sold = false
 							sellTrip = true
 							print("[MS] Selling: inv " .. tostring(curInv) .. "/" .. tostring(curMax) .. " threshold " .. tostring(SellTreshold))
-							while Toggles["AutoSell"] and gen == sellLoopGen and GetInventoryAmount() >= SellTreshold and not recovering do
+							while Toggles["AutoSell"] and gen == sellLoopGen and GetInventoryAmount() >= SellTreshold and not recovering and not collapseRecovering do
 								sold = true
 								Remote:FireServer("SellItems", {{}})
 								HumanoidRootPart.CFrame = SellArea
@@ -333,6 +384,7 @@ local function StartAutoRebirth()
 		local nilStreak = 0
 		while Toggles["AutoRebirth"] and run == rebirthRunId do
 			if buyPause then task.wait(0.3)
+			elseif areaTransit or recovering or collapseRecovering then task.wait(0.3)
 			else
 				if not Remote then EnsureRemote() end
 				if not Remote then task.wait(1)
@@ -353,6 +405,7 @@ local function StartAutoRebirth()
 						local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 10)
 						for _, block in pairs(parts) do
 							if not Toggles["AutoRebirth"] or run ~= rebirthRunId then break end
+							if areaTransit or recovering or collapseRecovering then break end
 							Remote:FireServer("MineBlock",{{block.Parent}})
 							task.wait()
 						end
@@ -365,6 +418,7 @@ local function StartAutoRebirth()
 		rebirthPhaseText = "mining + selling..."
 		while Toggles["AutoRebirth"] and run == rebirthRunId do
 			if buyPause then task.wait(0.3)
+			elseif areaTransit or recovering or collapseRecovering then task.wait(0.3)
 			else
 				if not Remote then EnsureRemote() end
 				if not Remote then task.wait(1)
@@ -378,10 +432,11 @@ local function StartAutoRebirth()
 						local parts = workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, 50)
 						for _, block in ipairs(parts) do
 							if not Toggles["AutoRebirth"] or run ~= rebirthRunId then break end
+							if areaTransit or recovering or collapseRecovering then break end
 							Remote:FireServer("MineBlock", {{block.Parent}})
 							task.wait()
 						end
-						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position end
+						if #parts > 0 then lastMineSpot = HumanoidRootPart.Position TrackArea() end
 						if sellTrip then task.wait(0.3)
 						else
 						do
@@ -391,7 +446,7 @@ local function StartAutoRebirth()
 						local SavedPosition = HumanoidRootPart.Position
 						local sold = false
 						sellTrip = true
-						while Toggles["AutoRebirth"] and run == rebirthRunId and GetInventoryAmount() >= SellTreshold and not recovering do
+						while Toggles["AutoRebirth"] and run == rebirthRunId and GetInventoryAmount() >= SellTreshold and not recovering and not collapseRecovering do
 							sold = true
 							Remote:FireServer("SellItems", {{}})
 							HumanoidRootPart.CFrame = SellArea
@@ -857,66 +912,15 @@ local function StartAutoTools()
 	end)
 end
 
-task.spawn(function()
-	local ok, col = pcall(function() return workspace:WaitForChild("Collapsed", 30) end)
-	if not ok or not col then return end
-	col.Changed:Connect(function()
-		local isCol = false
-		pcall(function() isCol = col.Value == true end)
-		if not isCol then return end
-		if areaTransit then return end
-		if not (Toggles["AutoMine"] or Toggles["FastMine"] or Toggles["AutoRebirth"]) then return end
-		areaPhaseText = "collapsed! recovering..."
-		print("[MS] Mine collapsed, recovering to area...")
-		task.wait(3)
-		local a = nil
-		for _, x in ipairs(Areas) do if x.name == lastAreaName then a = x break end end
-		a = a or DetectArea() or Areas[2]
-		lastAreaName = a.name
-		for _ = 1, 3 do
-			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-			if not h then break end
-			h.CFrame = CFrame.new(a.mine)
-			task.wait(0.5)
-			h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-			if h and (h.Position - a.mine).Magnitude <= 15 then break end
-		end
-		areaPhaseText = a.name .. ": recovered, mining..."
-		print("[MS] Recovered to " .. tostring(a.name))
-	end)
-end)
+-- NOTE: old collapse watcher removed (was broken: referenced Areas/DetectArea before they
+-- were defined, and only teleported without resuming). New RecoverFromCollapse watcher is
+-- installed after StartAreaRun below and reuses the early canonical Areas/DetectArea.
 
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
-local Areas = {
-	{ name = "Cyber",   moveTo = "CyberSpawn",  spawn = Vector3.new(21, 15, 30139),   walkEnd = Vector3.new(19, 13, 30051),   mine = Vector3.new(22, 12, 30037),   bridgeSize = Vector3.new(10, 1, 100), bridgePos = Vector3.new(21, 9.5, 30095) },
-	{ name = "Spawn",   moveTo = nil,           spawn = Vector3.new(-86, 14, -12),    walkEnd = Vector3.new(-36, 14, -3),     mine = Vector3.new(-17, 12, -3) },
-	{ name = "Space",   moveTo = "SpaceSpawn",  spawn = Vector3.new(-81, 15, 1569),   walkEnd = Vector3.new(-27, 12, 1568),   mine = Vector3.new(-15, 12, 1568) },
-	{ name = "Candy",   moveTo = "CandySpawn",  spawn = Vector3.new(-27, 15, 3011),   walkEnd = Vector3.new(2, 13, 3009),     mine = Vector3.new(11, 12, 3010) },
-	{ name = "Toy",     moveTo = "ToySpawn",    spawn = Vector3.new(10, 15, 5719),    walkEnd = Vector3.new(11, 13, 5699),    mine = Vector3.new(11, 12, 5687) },
-	{ name = "Food",    moveTo = "FoodSpawn",   spawn = Vector3.new(61, 14, 8675),    walkEnd = Vector3.new(59, 13, 8719),    mine = Vector3.new(56, 12, 8732) },
-	{ name = "Dino",    moveTo = "DinoSpawn",   spawn = Vector3.new(12, 15, 10581),   walkEnd = Vector3.new(12, 13, 10552),   mine = Vector3.new(14, 12, 10539) },
-	{ name = "Sea",     moveTo = "SeaSpawn",    spawn = Vector3.new(14, 12, 10539),   walkEnd = Vector3.new(17, 13, 11969),   mine = Vector3.new(18, 12, 11949) },
-	{ name = "Beach",   moveTo = "BeachSpawn",  spawn = Vector3.new(19, 14, 14437),   walkEnd = Vector3.new(15, 13, 14374),   mine = Vector3.new(15, 12, 14357) },
-	{ name = "Cavern",  moveTo = "CavernSpawn", spawn = Vector3.new(19, 15, 18461),   walkEnd = Vector3.new(20, 13, 18400),   mine = Vector3.new(21, 12, 18382) },
-	{ name = "MagicForest", moveTo = nil,       spawn = Vector3.new(15, 15, 22461),   walkEnd = Vector3.new(16, 13, 22420),   mine = Vector3.new(17, 12, 22409) },
-}
-local areaRunId = 0
-local areaPhaseText = "off"
-areaTransit = false
-local lastAreaName = nil
-local function DetectArea()
-	local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if not h then return nil end
-	local best, bestd = nil, math.huge
-	for _, a in ipairs(Areas) do
-		local dx = h.Position.X - a.mine.X
-		local dz = h.Position.Z - a.mine.Z
-		local d = dx * dx + dz * dz
-		if d < bestd then bestd = d best = a end
-	end
-	return best
-end
+-- NOTE: canonical Areas / DetectArea / lastAreaName / areaRunId / areaPhaseText are defined
+-- near the top of this file so mining loops + collapse recovery share one copy.
+-- (Old duplicate table removed here to avoid shadowing.)
 local function StopAreaRun()
 	areaRunId = areaRunId + 1
 	areaPhaseText = "off"
@@ -1046,11 +1050,167 @@ local function StartAreaRun(area)
 		if not alive() then clearTransit() return end
 		areaPhaseText = area.name .. ": running autorebirth..."
 		lastAreaName = area.name
+		TrackArea(true)
 		clearTransit()
 		Toggles["AutoRebirth"] = true
 		StartAutoRebirth()
 	end)
 end
+
+-- Collapse support: detectable via workspace.Collapsed (BoolValue, same one ClientScript
+-- watches in updateCollapsed()). When it flips true the mine refills and mining/sell loops
+-- would otherwise dig air. We pause everything, teleport back to the area we were in,
+-- then resume exactly what was on (toggles are left untouched, loops self-resume).
+local collapseGen = 0
+local function BlocksNear(pos, radius, maxParts)
+	local ok, parts = pcall(function()
+		local region = Region3.new(pos - Vector3.new(radius, radius, radius), pos + Vector3.new(radius, radius, radius))
+		return workspace:FindPartsInRegion3WithWhiteList(region, {game.Workspace.Blocks}, maxParts or 10)
+	end)
+	if ok and type(parts) == "table" then return #parts end
+	return -1
+end
+local function RecoverFromCollapse(reason)
+	collapseGen = collapseGen + 1
+	local gen = collapseGen
+	if collapseRecovering then return end
+	if not (Toggles["AutoMine"] or Toggles["FastMine"] or Toggles["AutoRebirth"] or Toggles["AutoSell"]) then return end
+	collapseRecovering = true
+	recovering = true
+	areaTransit = true -- pauses mine/sell/buy loops; they resume when cleared
+	-- Snapshot which area we were in BEFORE the teleport. Prefer explicit last run,
+	-- else nearest-mine detect (works for manual walkers), else saved mine spot.
+	local resumeArea = FindAreaByName(lastAreaName) or DetectArea()
+	if not resumeArea and lastMineSpot then
+		local best, bestd = nil, math.huge
+		for _, a in ipairs(Areas) do
+			local dx = lastMineSpot.X - a.mine.X
+			local dz = lastMineSpot.Z - a.mine.Z
+			local d = dx * dx + dz * dz
+			if d < bestd then bestd = d best = a end
+		end
+		resumeArea = best
+	end
+	resumeArea = resumeArea or Areas[2]
+	lastAreaName = resumeArea.name
+	local resumePos = resumeArea.mine
+	if lastMineSpot and (lastMineSpot - resumeArea.mine).Magnitude < 150 then
+		resumePos = lastMineSpot
+	end
+	areaPhaseText = resumeArea.name .. ": collapsed (" .. tostring(reason) .. "), recovering..."
+	print("[MS] Collapse detected (" .. tostring(reason) .. "). Was in " .. resumeArea.name .. ", pausing loops...")
+	task.spawn(function()
+		-- Let the server finish refilling; abort if a newer collapse supersedes us.
+		for _ = 1, 30 do
+			if gen ~= collapseGen then return end
+			task.wait(0.5)
+			local done = false
+			pcall(function()
+				local col = workspace:FindFirstChild("Collapsed")
+				if not col or col.Value ~= true then done = true end
+			end)
+			if done then break end
+			if _ >= 6 then break end -- don't wait forever (~3s), refill continues anyway
+		end
+		if gen ~= collapseGen then return end
+		-- Character may respawn during collapse; wait for it.
+		for _ = 1, 20 do
+			if gen ~= collapseGen then return end
+			if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then break end
+			task.wait(0.5)
+		end
+		-- Fast path: straight back to mine spot (same world, collapse only refills blocks).
+		local teleported = false
+		for _ = 1, 4 do
+			if gen ~= collapseGen then return end
+			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if not h then task.wait(0.5)
+			else
+				pcall(function() h.Anchored = false end)
+				h.CFrame = CFrame.new(resumePos)
+				task.wait(0.6)
+				h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+				if h and (h.Position - resumePos).Magnitude <= 20 then teleported = true break end
+			end
+		end
+		-- Verify blocks actually exist there. If not (got moved to surface / wrong world),
+		-- fall back to a full area run which re-does MoveTo + walk + bridge.
+		local verified = false
+		for _ = 1, 10 do
+			if gen ~= collapseGen then return end
+			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if h then
+				local n = BlocksNear(h.Position, 8, 10)
+				if n > 0 then verified = true break end
+				local n2 = BlocksNear(resumePos, 12, 10)
+				if n2 > 0 then
+					pcall(function() h.CFrame = CFrame.new(resumePos) end)
+					task.wait(0.5)
+				end
+			end
+			task.wait(0.5)
+		end
+		if gen ~= collapseGen then return end
+		if not teleported or not verified then
+			areaPhaseText = resumeArea.name .. ": simple teleport failed, full re-run..."
+			print("[MS] Simple teleport failed (teleported=" .. tostring(teleported) .. " blocks=" .. tostring(verified) .. "), full StartAreaRun(" .. resumeArea.name .. ")")
+			-- Release our pause so StartAreaRun can drive, then hand off to it.
+			collapseRecovering = false
+			recovering = false
+			areaTransit = false
+			StartAreaRun(resumeArea)
+			return
+		end
+		lastMineSpot = resumePos
+		TrackArea(true)
+		areaPhaseText = resumeArea.name .. ": recovered, resuming..."
+		print("[MS] Recovered to " .. resumeArea.name .. ", resuming previous toggles.")
+		collapseRecovering = false
+		recovering = false
+		areaTransit = false
+	end)
+end
+task.spawn(function()
+	-- Primary signal: BoolValue watched by the game's own ClientScript.
+	local col = nil
+	pcall(function() col = workspace:WaitForChild("Collapsed", 30) end)
+	if col then
+		col.Changed:Connect(function()
+			local isCol = false
+			pcall(function() isCol = col.Value == true end)
+			if isCol then RecoverFromCollapse("Collapsed=true") end
+		end)
+	else
+		print("[MS] WARNING: workspace.Collapsed not found, using block-watchdog only")
+	end
+	-- Backup watchdog: if mining is on but there are zero blocks around us for a while
+	-- (missed signal / different collapse object), still recover. Polls cheaply.
+	local emptyStreak = 0
+	while true do
+		task.wait(2)
+		pcall(function()
+			local mining = Toggles["AutoMine"] or Toggles["FastMine"] or Toggles["AutoRebirth"]
+			if not mining or collapseRecovering or areaTransit or sellTrip then emptyStreak = 0 return end
+			local h = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if not h then emptyStreak = 0 return end
+			local n = BlocksNear(h.Position, 8, 10)
+			if n == 0 then
+				emptyStreak = emptyStreak + 1
+				local colNow = false
+				pcall(function()
+					local c = workspace:FindFirstChild("Collapsed")
+					colNow = c and c.Value == true
+				end)
+				if emptyStreak >= 4 and (colNow or BlocksNear(h.Position, 20, 20) == 0) then
+					emptyStreak = 0
+					RecoverFromCollapse("no-blocks-watchdog")
+				end
+			else
+				emptyStreak = 0
+			end
+		end)
+	end
+end)
 
 local Window = WindUI:CreateWindow({
 	Title = "Mining Simulator",
